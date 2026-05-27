@@ -110,6 +110,20 @@ class ProjectSerializer(serializers.ModelSerializer):
             
         return min(p, 100)
 
+    def create(self, validated_data):
+        manager_allocation = validated_data.pop('manager_allocation', None)
+        instance = super().create(validated_data)
+        if manager_allocation is not None:
+            validated_data['manager_allocation'] = manager_allocation
+        return instance
+
+    def update(self, instance, validated_data):
+        manager_allocation = validated_data.pop('manager_allocation', None)
+        instance = super().update(instance, validated_data)
+        if manager_allocation is not None:
+            validated_data['manager_allocation'] = manager_allocation
+        return instance
+
 
 class TaskDependencySerializer(serializers.ModelSerializer):
     class Meta:
