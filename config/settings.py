@@ -201,7 +201,7 @@ CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 # External Notifications
 # ---------------------------------------------------------------------------
 # Telegram settings (set via env or here for demo)
-TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '8576176757:AAFHUmgJ5lLL5sN1yYlgYxCg1SfF71Y5BPw')
+TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_CHANNEL_ID = os.environ.get('TELEGRAM_CHANNEL_ID', '') # Default channel if no personal chat
 
 # Slack settings
