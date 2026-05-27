@@ -1,0 +1,10 @@
+from rest_framework import serializers
+from .models import Notification
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Notification
+        fields = ['id', 'title', 'body', 'type', 'is_read', 'link',
+                  'task_id', 'project_id', 'created_at']
+        read_only_fields = ['id', 'created_at']
