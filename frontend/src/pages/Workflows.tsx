@@ -78,6 +78,7 @@ export default function Workflows() {
     risk_level: 'LOW', integration_url: '', integration_config: {}
   });
   const [newTaskName, setNewTaskName] = useState('');
+  const [newTaskDesc, setNewTaskDesc] = useState('');
   const [newTaskType, setNewTaskType] = useState('TEXT_REPORT');
   const [newTaskSla, setNewTaskSla] = useState(24);
   const [newTaskAssignee, setNewTaskAssignee] = useState<number | ''>('');
@@ -242,6 +243,7 @@ export default function Workflows() {
   const openAddTask = (status: TaskStatus) => {
     setPendingStatus(status);
     setNewTaskName('');
+    setNewTaskDesc('');
     setNewTaskType('TEXT_REPORT');
     setNewTaskSla(24);
     setNewTaskAssignee('');
@@ -262,6 +264,7 @@ export default function Workflows() {
       await createTask({
         workflow: activeProcessId,
         name: newTaskName.trim(),
+        description: newTaskDesc.trim(),
         task_type: newTaskType,
         status: pendingStatus,
         sla_hours: newTaskSla,
@@ -280,6 +283,7 @@ export default function Workflows() {
     setEditingTask({
       id: task.id,
       name: task.name,
+      description: task.description || '',
       task_type: task.task_type,
       sla_hours: task.sla_hours,
       assigned_to: task.assigned_to || '',
@@ -299,6 +303,7 @@ export default function Workflows() {
     try {
       await updateWorkflowTask(editingTask.id, {
         name: editingTask.name,
+        description: editingTask.description || '',
         task_type: editingTask.task_type,
         sla_hours: editingTask.sla_hours,
         assigned_to: editingTask.assigned_to || null,
@@ -348,7 +353,7 @@ export default function Workflows() {
     <div className="p-8 space-y-6 h-full flex flex-col">
       <div className="flex items-center justify-between flex-shrink-0">
         <div>
-          <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+          <h1 className="text-2xl font-bold text-slate-100 flex items-center gap-2">
             <GitBranch size={22} className="text-violet-400" /> Бизнес-процессы
           </h1>
           <p className="text-sm text-slate-400 mt-1">Канбан-доска для управления задачами процесса</p>
@@ -359,13 +364,13 @@ export default function Workflows() {
             <div className="flex bg-slate-900 border border-slate-800 rounded-lg p-1 mr-2">
               <button 
                 onClick={() => setActiveTab('active')}
-                className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${activeTab === 'active' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}
+                className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${activeTab === 'active' ? 'bg-slate-800 text-slate-100 shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}
               >
                 Активные
               </button>
               <button 
                 onClick={() => setActiveTab('catalog')}
-                className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${activeTab === 'catalog' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}
+                className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${activeTab === 'catalog' ? 'bg-slate-800 text-slate-100 shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}
               >
                 Шаблоны
               </button>
@@ -522,10 +527,14 @@ export default function Workflows() {
                           key={task.id}
                           draggable={(isManager || user?.id === task.assigned_to) && !isBlocked(task)}
                           onDragStart={e => handleDragStart(e, task.id)}
-                          className={`bg-slate-900 border rounded-lg p-3.5 hover:border-slate-700 transition-all group shadow-sm ${
+                          className={`bg-slate-900 hover:bg-slate-700/40 border rounded-lg p-3.5 hover:border-slate-700 transition-all group shadow-sm ${
                             isBlocked(task) ? 'opacity-60 grayscale-[0.5]' : 'cursor-grab active:cursor-grabbing'
                           } ${
-                            isTargeted ? 'border-amber-500 ring-2 ring-amber-500/20 shadow-[0_0_15px_rgba(245,158,11,0.2)] animate-pulse' : 'border-slate-800'
+                            task.priority === 'URGENT'
+                              ? 'border-red-500/80 ring-2 ring-red-500/10 shadow-[0_0_15px_rgba(239,68,68,0.15)] bg-red-950/5'
+                              : isTargeted
+                              ? 'border-amber-500 ring-2 ring-amber-500/20 shadow-[0_0_15px_rgba(245,158,11,0.2)] animate-pulse'
+                              : 'border-slate-800'
                           }`}
                         >
                             {isTargeted && (
@@ -538,6 +547,11 @@ export default function Workflows() {
                               <span className={`text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded flex items-center gap-1 ${tt.color}`}>
                                 <TypeIcon size={9} />{tt.label}
                               </span>
+                              {task.priority === 'URGENT' && (
+                                <span className="text-[9px] bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded border border-red-500/30 font-bold uppercase tracking-tight animate-pulse">
+                                  Срочно
+                                </span>
+                              )}
                               {isBlocked(task) && (
                                 <span className="text-[9px] bg-slate-800 text-slate-500 px-1.5 py-0.5 rounded border border-slate-700 flex items-center gap-1">
                                   <X size={8} /> LOCKED
@@ -549,7 +563,7 @@ export default function Workflows() {
                               <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
                                 {canManageTasks && (
                                   <>
-                                    <button onClick={(e) => { e.stopPropagation(); handleEditTask(task); }} className="p-0.5 hover:text-white transition-colors" title="Редактировать"><Edit2 size={10} /></button>
+                                    <button onClick={(e) => { e.stopPropagation(); handleEditTask(task); }} className="p-0.5 hover:text-slate-100 transition-colors" title="Редактировать"><Edit2 size={10} /></button>
                                     <button onClick={(e) => { e.stopPropagation(); handleDeleteTask(task.id); }} className="p-0.5 hover:text-red-400 transition-colors" title="Удалить"><Trash2 size={10} /></button>
                                   </>
                                 )}
@@ -562,7 +576,10 @@ export default function Workflows() {
                               </div>
                             </div>
                           </div>
-                          <p className="text-sm font-medium text-slate-200 leading-snug mb-2 group-hover:text-white">{task.name}</p>
+                          <p className="text-sm font-medium text-slate-200 leading-snug mb-2 group-hover:text-slate-100">{task.name}</p>
+                          {task.description && (
+                            <p className="text-xs text-slate-400 leading-normal mb-2.5 line-clamp-2">{task.description}</p>
+                          )}
                           
                           <div className="mb-3">
                             <div className="flex justify-between items-center mb-1">
@@ -1059,6 +1076,15 @@ export default function Workflows() {
                   className="w-full bg-slate-800 border border-slate-700 text-slate-200 text-sm rounded-lg px-3 py-2.5 focus:outline-none focus:border-violet-500"
                 />
               </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1.5">Описание задачи</label>
+                <textarea
+                  value={newTaskDesc}
+                  onChange={e => setNewTaskDesc(e.target.value)}
+                  className="w-full bg-slate-800 border border-slate-700 text-slate-200 text-sm rounded-lg px-3 py-2 h-20 focus:outline-none focus:border-violet-500 resize-none"
+                  placeholder="Опишите подробности задачи..."
+                />
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs text-slate-400 mb-1.5">Тип задачи</label>
@@ -1147,6 +1173,15 @@ export default function Workflows() {
                   value={editingTask.name}
                   onChange={e => setEditingTask({ ...editingTask, name: e.target.value })}
                   className="w-full bg-slate-800 border border-slate-700 text-slate-200 text-sm rounded-lg px-3 py-2.5 focus:outline-none focus:border-violet-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1.5">Описание задачи</label>
+                <textarea
+                  value={editingTask.description || ''}
+                  onChange={e => setEditingTask({ ...editingTask, description: e.target.value })}
+                  className="w-full bg-slate-800 border border-slate-700 text-slate-200 text-sm rounded-lg px-3 py-2 h-20 focus:outline-none focus:border-violet-500 resize-none"
+                  placeholder="Опишите подробности задачи..."
                 />
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -1434,7 +1469,7 @@ export default function Workflows() {
                           />
                           <CheckCircle2 size={12} className="absolute text-white opacity-0 peer-checked:opacity-100 transition-opacity pointer-events-none" />
                         </div>
-                        <span className={`text-xs font-medium transition-colors ${item.is_done ? 'text-slate-400 line-through' : 'text-slate-200 group-hover:text-white'}`}>{item.text}</span>
+                        <span className={`text-xs font-medium transition-colors ${item.is_done ? 'text-slate-400 line-through' : 'text-slate-200 group-hover:text-slate-100'}`}>{item.text}</span>
                       </label>
                     ))}
                   </div>

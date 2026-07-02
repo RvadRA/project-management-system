@@ -903,7 +903,7 @@ function ProjectDetailPanel({
                 className={`text-xs px-2 py-0.5 rounded-full border font-medium bg-transparent focus:outline-none cursor-pointer ${statusStyle[project.status] ?? statusStyle.DRAFT} disabled:opacity-50`}
               >
                 {Object.entries(statusMap).map(([val, label]) => (
-                  <option key={val} value={val} className="bg-slate-900 text-white">{label}</option>
+                  <option key={val} value={val} className="bg-slate-900 text-slate-100">{label}</option>
                 ))}
               </select>
             </div>
@@ -1113,7 +1113,7 @@ function ProjectDetailPanel({
                           className="w-3.5 h-3.5 rounded border-slate-700 text-violet-500 bg-slate-800 focus:ring-0"
                         />
                         <div className="flex flex-col">
-                           <span className="text-xs text-slate-300 group-hover:text-white transition-colors">{r.name}</span>
+                           <span className="text-xs text-slate-300 group-hover:text-slate-100 transition-colors">{r.name}</span>
                            <span className="text-[8px] text-slate-500 uppercase">Prob: {r.probability} · Impact: {r.impact}</span>
                         </div>
                       </label>
@@ -1618,6 +1618,7 @@ export default function Projects() {
   const [newProject, setNewProject] = useState({
     name: '',
     description: '',
+    base_instructions: '',
     status: 'DRAFT' as const,
     domain: 'IT',
     start_date: new Date().toISOString().split('T')[0],
@@ -1627,6 +1628,7 @@ export default function Projects() {
     manager_allocation: 100,
     risk_ids: [] as number[],
   });
+  const [baseInstructionsFile, setBaseInstructionsFile] = useState<File | null>(null);
 
   // Import form state
   const [importSourceId, setImportSourceId] = useState<number | ''>('');
@@ -1676,13 +1678,26 @@ export default function Projects() {
   const [similarProjects, setSimilarProjects] = useState<Project[]>([]);
   
   useEffect(() => {
-    if (newProject.name.length > 2) {
-      const match = projects.filter(p => p.name.toLowerCase().includes(newProject.name.toLowerCase()) && p.id !== selectedProjectId);
-      setSimilarProjects(match.slice(0, 3));
+    if (newProject.description.length > 10) {
+      const getStem = (w: string) => w.length <= 3 ? w : w.substring(0, 4);
+      const matches = projects.filter(p => {
+        if (!p.description || p.id === selectedProjectId) return false;
+        const wordsNew = newProject.description.toLowerCase().split(/[^a-zа-я0-9]+/i).filter(w => w.length > 2);
+        const wordsOld = p.description.toLowerCase().split(/[^a-zа-я0-9]+/i).filter(w => w.length > 2);
+        if (wordsNew.length === 0 || wordsOld.length === 0) return false;
+        
+        const stemsNew = wordsNew.map(getStem);
+        const stemsOld = new Set(wordsOld.map(getStem));
+        
+        const intersection = stemsNew.filter(s => stemsOld.has(s)).length;
+        const similarity = intersection / stemsNew.length;
+        return similarity >= 0.7;
+      });
+      setSimilarProjects(matches.slice(0, 3));
     } else {
       setSimilarProjects([]);
     }
-  }, [newProject.name, projects]);
+  }, [newProject.description, projects, selectedProjectId]);
 
   const handleAddProject = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1690,7 +1705,7 @@ export default function Projects() {
     setSubmitting(true);
     setError('');
     try {
-      await createProject({
+      const createdProj = await createProject({
         name: newProject.name.trim(),
         description: newProject.description.trim(),
         status: newProject.status,
@@ -1702,9 +1717,28 @@ export default function Projects() {
         manager_allocation: Number(newProject.manager_allocation),
         risks: newProject.risk_ids,
       });
+
+      if (createdProj && (newProject.base_instructions.trim() || baseInstructionsFile)) {
+        const formData = new FormData();
+        formData.append('title', `Базовая инструкция: ${createdProj.name}`);
+        formData.append('description', `Базовые методические материалы для проекта ${createdProj.name}`);
+        formData.append('text_instruction', newProject.base_instructions.trim());
+        formData.append('project', createdProj.id.toString());
+        formData.append('tags', JSON.stringify(["базовая", "инструкция"]));
+        if (baseInstructionsFile) {
+          formData.append('file', baseInstructionsFile);
+        }
+        await api.post('/projects/knowledge-materials/', formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        });
+      }
+
       setModalMode('none');
+      setBaseInstructionsFile(null);
       setNewProject({ 
-        name: '', description: '', status: 'DRAFT', domain: 'IT', 
+        name: '', description: '', base_instructions: '', status: 'DRAFT', domain: 'IT', 
         start_date: new Date().toISOString().split('T')[0], 
         end_date: '2026-12-31', budget: '', manager_id: '',
         risk_ids: [],
@@ -1844,7 +1878,7 @@ export default function Projects() {
               </span>
             </div>
             <div className="flex items-start justify-between gap-2 mb-2">
-              <h3 className="text-sm font-semibold text-slate-100 group-hover:text-white leading-snug">{project.name}</h3>
+              <h3 className="text-sm font-semibold text-slate-100 group-hover:text-slate-100 leading-snug">{project.name}</h3>
               <ArrowUpRight size={14} className="text-slate-600 group-hover:text-violet-400 transition-colors flex-shrink-0 mt-0.5" />
             </div>
             <p className="text-xs text-slate-500 leading-relaxed line-clamp-2 mb-4 flex-1">{project.description}</p>
@@ -1938,31 +1972,6 @@ export default function Projects() {
                     className="w-full bg-slate-800 border border-slate-700 text-slate-200 text-sm rounded-lg px-3 py-2.5 focus:outline-none focus:border-violet-500"
                     placeholder="Например: Обновление API"
                   />
-                  {similarProjects.length > 0 && (
-                    <div className="mt-2 p-3 bg-violet-500/10 border border-violet-500/20 rounded-lg">
-                      <p className="text-[10px] text-violet-400 font-bold uppercase mb-2 flex items-center gap-1">
-                        <Zap size={10} /> Найдены похожие проекты:
-                      </p>
-                      <div className="space-y-1.5">
-                        {similarProjects.map(p => (
-                          <div key={p.id} className="flex items-center justify-between group">
-                            <span className="text-xs text-slate-300 truncate max-w-[200px]">{p.name}</span>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setImportSourceId(p.id);
-                                setImportName(`${newProject.name} (копия из ${p.name})`);
-                                setModalMode('import');
-                              }}
-                              className="text-[10px] bg-violet-600 hover:bg-violet-500 text-white px-2 py-0.5 rounded transition-all opacity-0 group-hover:opacity-100"
-                            >
-                              Импортировать задачи
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
                 </div>
                 <div>
                   <label className="block text-xs text-slate-400 mb-1.5">Описание</label>
@@ -1973,6 +1982,46 @@ export default function Projects() {
                     className="w-full bg-slate-800 border border-slate-700 text-slate-200 text-sm rounded-lg px-3 py-2.5 focus:outline-none focus:border-violet-500 resize-none"
                     placeholder="Краткое описание целей"
                   />
+                  {similarProjects.length > 0 && (
+                    <div className="mt-2 p-3 bg-violet-500/10 border border-violet-500/20 rounded-lg animate-in fade-in duration-200">
+                      <p className="text-[11px] text-violet-400 font-medium flex items-center gap-1.5">
+                        <Zap size={12} className="animate-pulse text-violet-400" />
+                        <span>💡 Найдено похожее описание в проекте <strong>"{similarProjects[0].name}"</strong>.</span>
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setImportSourceId(similarProjects[0].id);
+                          setImportName(newProject.name || `${similarProjects[0].name} (копия)`);
+                          setModalMode('import');
+                        }}
+                        className="mt-2 text-[10px] bg-violet-650 hover:bg-violet-600 bg-violet-600 text-white font-bold px-3 py-1.5 rounded-lg transition-all shadow-md shadow-violet-600/10"
+                      >
+                        Импортировать задачи и планирование
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1.5">Базовые инструкции / Методические материалы (для базы знаний)</label>
+                  <textarea
+                    rows={3}
+                    value={newProject.base_instructions}
+                    onChange={e => setNewProject({ ...newProject, base_instructions: e.target.value })}
+                    className="w-full bg-slate-800 border border-slate-700 text-slate-200 text-sm rounded-lg px-3 py-2.5 focus:outline-none focus:border-violet-500 resize-none"
+                    placeholder="Укажите инструкции, которые будут сохранены в Базе знаний для участников проекта..."
+                  />
+                  <div className="mt-2.5">
+                    <label className="block text-[10px] text-slate-400 mb-1">Прикрепить файл к инструкции (опционально)</label>
+                    <input 
+                      type="file" 
+                      onChange={e => e.target.files && setBaseInstructionsFile(e.target.files[0])}
+                      className="w-full text-xs text-slate-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-slate-800 file:text-slate-300 hover:file:bg-slate-700 cursor-pointer"
+                    />
+                    {baseInstructionsFile && (
+                      <p className="text-[10px] text-emerald-400 mt-1">✔ Выбран файл: {baseInstructionsFile.name}</p>
+                    )}
+                  </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>

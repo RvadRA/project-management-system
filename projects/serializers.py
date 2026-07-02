@@ -2,7 +2,7 @@ from django.db import models
 from django.utils import timezone
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import Project, ProjectMember, PlanningBlock, Task, TaskDependency, AuditLog, GlobalSetting
+from .models import Project, ProjectMember, PlanningBlock, Task, TaskDependency, AuditLog, GlobalSetting, KnowledgeMaterial
 
 
 class GlobalSettingSerializer(serializers.ModelSerializer):
@@ -237,3 +237,22 @@ class PlanningBlockSerializer(serializers.ModelSerializer):
             'success_rate': obj.success_rate or 0.85,
             'usage_count': derived_blocks.count()
         }
+
+
+class KnowledgeMaterialSerializer(serializers.ModelSerializer):
+    created_by_name = serializers.SerializerMethodField(read_only=True)
+    project_name = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = KnowledgeMaterial
+        fields = '__all__'
+
+    def get_created_by_name(self, obj):
+        if obj.created_by:
+            return obj.created_by.get_full_name() or obj.created_by.username
+        return None
+
+    def get_project_name(self, obj):
+        if obj.project:
+            return obj.project.name
+        return None

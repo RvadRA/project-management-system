@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
@@ -13,6 +14,7 @@ import Audit from './pages/Audit';
 import PlanningCatalog from './pages/PlanningCatalog';
 import Calendar from './pages/Calendar';
 import WorkflowEditor from './pages/WorkflowEditor';
+import KnowledgeBase from './pages/KnowledgeBase';
 import { NotFoundPage, ForbiddenPage, ServerErrorPage } from './components/ErrorPages';
 import Login from './pages/Login';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -54,6 +56,7 @@ function AppRoutes() {
                 <Route path="/profile" element={<Profile />} />
                 <Route path="/projects" element={<Projects />} />
                 <Route path="/workflows" element={<Workflows />} />
+                <Route path="/knowledge-base" element={<KnowledgeBase />} />
                 <Route
                   path="/workflows/editor"
                   element={
@@ -143,6 +146,15 @@ function AppRoutes() {
 }
 
 function App() {
+  useEffect(() => {
+    const savedTheme = localStorage.getItem('theme');
+    if (savedTheme === 'light') {
+      document.documentElement.classList.add('theme-light');
+    } else {
+      document.documentElement.classList.remove('theme-light');
+    }
+  }, []);
+
   return (
     <AuthProvider>
       <AppProvider>

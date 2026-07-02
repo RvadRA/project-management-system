@@ -3,7 +3,7 @@ import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, FolderKanban, Users, Zap,
   GitBranch, BarChart3, ClipboardCheck, LogOut, Shield, Briefcase, UserCheck, Settings, History,
-  ChevronLeft, ChevronRight, Package, CalendarDays
+  ChevronLeft, ChevronRight, Package, CalendarDays, BookOpen, Sun, Moon
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useAppContext } from '../context/AppContext';
@@ -25,6 +25,7 @@ const ALL_NAV_ITEMS = [
   { to: '/catalog',   icon: Package,         label: 'Библиотека WBS', roles: ['ADMIN', 'MANAGER'] },
   { to: '/audit',     icon: History,         label: 'Журнал аудита',  roles: ['ADMIN', 'MANAGER'] },
   { to: '/settings',  icon: Settings,        label: 'Настройки',      roles: ['ADMIN'] },
+  { to: '/knowledge-base', icon: BookOpen,   label: 'База знаний',    roles: ['ADMIN', 'MANAGER', 'EMPLOYEE'] },
 ];
 
 const ROLE_META: Record<string, { label: string; color: string; icon: typeof Shield }> = {
@@ -37,6 +38,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
   const { unreadCount } = useAppContext();
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark');
 
   const role = user?.role ?? 'EMPLOYEE';
   const navItems = ALL_NAV_ITEMS.filter(item => item.roles.includes(role));
@@ -119,6 +121,28 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
         {/* Bottom: user info + logout */}
         <div className={`px-3 py-4 border-t border-slate-800 bg-slate-900/50`}>
+          {/* Theme Toggler */}
+          <div className={`flex items-center ${isCollapsed ? 'justify-center' : 'justify-between'} px-3 py-2.5 mb-2 rounded-lg bg-slate-800/20 border border-slate-800/50`}>
+            {!isCollapsed && <span className="text-xs text-slate-400 font-semibold">Тема оформления</span>}
+            <button
+              onClick={() => {
+                const currentTheme = localStorage.getItem('theme');
+                const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+                localStorage.setItem('theme', newTheme);
+                if (newTheme === 'light') {
+                  document.documentElement.classList.add('theme-light');
+                } else {
+                  document.documentElement.classList.remove('theme-light');
+                }
+                setTheme(newTheme);
+              }}
+              className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-violet-400 transition-colors flex items-center justify-center"
+              title={theme === 'light' ? 'Включить темную тему' : 'Включить светлую тему'}
+            >
+              {theme === 'light' ? <Moon size={14} /> : <Sun size={14} />}
+            </button>
+          </div>
+
           <button
             onClick={logout}
             className={`w-full flex items-center ${isCollapsed ? 'justify-center' : 'gap-3'} px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-all duration-200 group relative`}

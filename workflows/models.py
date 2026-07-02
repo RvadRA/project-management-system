@@ -147,6 +147,18 @@ class WorkflowTask(models.Model):
         return f"{self.workflow.name} → {self.name} [{self.status}]"
 
     def save(self, *args, **kwargs):
+        # Auto-prioritization check
+        keywords = ["срочно", "критично", "горит", "в первую очередь", "авария", "срочно сделать", "asap"]
+        text = f"{self.name or ''} {self.description or ''}".lower()
+        is_urgent = any(kw in text for kw in keywords)
+        
+        if is_urgent:
+            self.priority = 'URGENT'
+            self.sla_hours = 2
+            self.order = 0
+            if self.status != 'DONE':
+                self.due_date = timezone.now() + timezone.timedelta(hours=2)
+
         # Если due_date не задан, вычисляем его на основе sla_hours
         if not self.due_date and self.sla_hours:
             self.due_date = timezone.now() + timezone.timedelta(hours=self.sla_hours)

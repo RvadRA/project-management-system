@@ -86,7 +86,6 @@ npm run dev
 | 🎨 Приложение       | http://localhost:5173              |
 | 🖧 Backend API       | http://localhost:8000/api/         |
 | 🔧 Admin Panel      | http://localhost:8000/admin/       |
-| 📖 Swagger API Docs | http://localhost:8000/api/swagger/ |
 
 ---
 

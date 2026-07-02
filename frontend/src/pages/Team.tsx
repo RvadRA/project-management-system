@@ -220,13 +220,13 @@ export default function Team() {
              <div className="flex bg-slate-900 border border-slate-800 rounded-lg p-1">
                 <button 
                   onClick={() => setActiveTab('members')}
-                  className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${activeTab === 'members' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}
+                  className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${activeTab === 'members' ? 'bg-slate-800 text-slate-100 shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}
                 >
                   Участники
                 </button>
                 <button 
                   onClick={() => setActiveTab('availability')}
-                  className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${activeTab === 'availability' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}
+                  className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${activeTab === 'availability' ? 'bg-slate-800 text-slate-100 shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}
                 >
                   Доступность
                 </button>

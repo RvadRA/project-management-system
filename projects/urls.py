@@ -3,7 +3,7 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     ProjectViewSet, PlanningBlockViewSet, ImportPlanningView,
     AuditLogViewSet, TaskViewSet, TaskDependencyViewSet, AnalyticsViewSet,
-    GlobalSettingViewSet,
+    GlobalSettingViewSet, KnowledgeMaterialViewSet,
 )
 
 router = DefaultRouter()
@@ -14,6 +14,7 @@ router.register(r'audit-logs', AuditLogViewSet, basename='audit-log')
 router.register(r'tasks', TaskViewSet, basename='project-task')
 router.register(r'dependencies', TaskDependencyViewSet, basename='task-dependency')
 router.register(r'dashboard', AnalyticsViewSet, basename='analytics')
+router.register(r'knowledge-materials', KnowledgeMaterialViewSet, basename='knowledge-material')
 
 urlpatterns = [
     path('', include(router.urls)),

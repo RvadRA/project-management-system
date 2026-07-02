@@ -158,6 +158,16 @@ class Task(models.Model):
     def __str__(self):
         return self.name
 
+    def save(self, *args, **kwargs):
+        # Auto-prioritization check
+        keywords = ["срочно", "критично", "горит", "в первую очередь", "авария", "срочно сделать", "asap"]
+        text = f"{self.name or ''} {self.description or ''}".lower()
+        is_urgent = any(kw in text for kw in keywords)
+        if is_urgent:
+            self.priority = 'URGENT'
+            self.order = 0
+        super().save(*args, **kwargs)
+
 
 class TaskDependency(models.Model):
     DEPENDENCY_TYPES = [
@@ -190,3 +200,18 @@ class AuditLog(models.Model):
 
     def __str__(self):
         return f"[{self.created_at:%Y-%m-%d %H:%M}] {self.action}"
+
+
+class KnowledgeMaterial(models.Model):
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    file = models.FileField(upload_to='knowledge_base/', null=True, blank=True)
+    text_instruction = models.TextField(blank=True)
+    tags = models.JSONField(default=list, blank=True)
+    project = models.ForeignKey(Project, on_delete=models.SET_NULL, null=True, blank=True, related_name='knowledge_materials')
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.title

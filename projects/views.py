@@ -5,10 +5,11 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.db import models as django_models
-from .models import Project, ProjectMember, PlanningBlock, Task, TaskDependency, AuditLog, GlobalSetting
+from .models import Project, ProjectMember, PlanningBlock, Task, TaskDependency, AuditLog, GlobalSetting, KnowledgeMaterial
 from .serializers import (
     ProjectSerializer, ProjectMemberSerializer, PlanningBlockSerializer,
     TaskSerializer, TaskDependencySerializer, AuditLogSerializer, GlobalSettingSerializer,
+    KnowledgeMaterialSerializer,
 )
 from .services import PlanningImportService
 from .permissions import IsProjectManagerOrAdmin
@@ -32,6 +33,29 @@ class GlobalSettingViewSet(viewsets.ModelViewSet):
         if self.request.user.role != 'ADMIN':
             raise ValidationError("Только администратор может создавать системные настройки.")
         serializer.save()
+
+
+class KnowledgeMaterialViewSet(viewsets.ModelViewSet):
+    queryset = KnowledgeMaterial.objects.all()
+    serializer_class = KnowledgeMaterialSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return self.queryset.select_related('project', 'created_by')
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+    def perform_update(self, serializer):
+        obj = self.get_object()
+        if self.request.user.role != 'ADMIN' and obj.created_by != self.request.user:
+            raise serializers.ValidationError("У вас нет прав для изменения этого материала.")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if self.request.user.role != 'ADMIN' and instance.created_by != self.request.user:
+            raise serializers.ValidationError("У вас нет прав для удаления этого материала.")
+        instance.delete()
 
 
 def _log(project, user, action, detail=None):
@@ -65,6 +89,17 @@ class ProjectViewSet(viewsets.ModelViewSet):
             raise serializers.ValidationError("У сотрудника нет прав создавать проекты.")
         project = serializer.save()
         _log(project, user, 'PROJECT_CREATED', {'name': project.name})
+        
+        base_instructions = self.request.data.get('base_instructions')
+        if base_instructions:
+            KnowledgeMaterial.objects.create(
+                title=f"Базовая инструкция: {project.name}",
+                description=f"Базовые методические материалы для проекта {project.name}",
+                text_instruction=base_instructions,
+                tags=["базовая", "инструкция"],
+                project=project,
+                created_by=user
+            )
         
         # If manager is assigned, add them to team as MANAGER with specified or default 100% allocation
         if project.manager:

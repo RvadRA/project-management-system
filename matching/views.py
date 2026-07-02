@@ -102,6 +102,68 @@ class MatchingViewSet(viewsets.ViewSet):
         serializer = CandidateScoreSerializer(results, many=True)
         return Response(serializer.data)
 
+    @action(detail=False, methods=['post'])
+    def compare(self, request):
+        data = request.data
+        candidate_ids = data.get('candidate_ids', [])
+        if not candidate_ids:
+            return Response({'error': 'candidate_ids are required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            start_str = data.get('date_from') or data.get('project_start')
+            end_str = data.get('date_to') or data.get('project_end')
+            project_start = datetime.date.fromisoformat(start_str)
+            project_end = datetime.date.fromisoformat(end_str)
+        except (TypeError, ValueError):
+            return Response(
+                {'error': 'date_from and date_to (YYYY-MM-DD) are required'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        required_skill_ids = data.get('required_skill_ids', [])
+        required_skills_detail = data.get('required_skills', [])
+
+        if required_skill_ids:
+            required = [
+                RequiredSkill(skill_id=sid, min_level=1, preferred_level=3)
+                for sid in required_skill_ids
+            ]
+        else:
+            required = [
+                RequiredSkill(
+                    skill_id=s['skill_id'],
+                    min_level=s.get('min_level', 1),
+                    preferred_level=s.get('preferred_level', 3),
+                )
+                for s in required_skills_detail
+            ]
+
+        raw_weights = data.get('weights', {})
+        weights = None
+        if raw_weights:
+            key_map = {
+                'w1_competence': 'w1',
+                'w2_experience': 'w2',
+                'w3_availability': 'w3',
+                'w4_performance': 'w4',
+                'w5_cost': 'w5',
+                'w1': 'w1', 'w2': 'w2', 'w3': 'w3', 'w4': 'w4', 'w5': 'w5',
+            }
+            weights = {key_map[k]: v for k, v in raw_weights.items() if k in key_map}
+
+        results = rank_candidates(
+            project_start=project_start,
+            project_end=project_end,
+            required_skills=required,
+            domain=data.get('domain'),
+            max_hourly_rate=data.get('max_hourly_rate'),
+            weights=weights,
+            employee_ids=candidate_ids,
+        )
+
+        serializer = CandidateScoreSerializer(results, many=True)
+        return Response(serializer.data)
+
 
 class SkillViewSet(viewsets.ModelViewSet):
     queryset = Skill.objects.all()

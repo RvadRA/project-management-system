@@ -139,7 +139,7 @@ export function FileUploadSubmission({ task, onClose }: FileUploadSubmissionProp
           multiple
           className="hidden"
           onChange={e => e.target.files && addFiles(e.target.files)}
-          accept={allowedTypes.map(t => `.${t}`).join(',')}
+          accept={allowedTypes.map((t: string) => `.${t}`).join(',')}
         />
       </div>
 

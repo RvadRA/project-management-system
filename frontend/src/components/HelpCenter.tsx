@@ -85,7 +85,7 @@ export function HelpCenter() {
                       className="w-full text-left p-4 bg-slate-800/30 border border-slate-800 rounded-xl hover:border-violet-500/30 transition-all"
                     >
                       <div className="flex items-center justify-between">
-                        <span className="text-sm font-bold text-white">{article.title}</span>
+                        <span className="text-sm font-bold text-slate-100">{article.title}</span>
                         <span className={`text-xs px-2 py-0.5 rounded ${
                           article.category === 'projects' ? 'bg-violet-500/10 text-violet-400' :
                           article.category === 'matching' ? 'bg-emerald-500/10 text-emerald-400' :

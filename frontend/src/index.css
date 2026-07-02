@@ -1,18 +1,198 @@
 @import "tailwindcss";
 
+@theme {
+  --color-slate-950: var(--slate-950);
+  --color-slate-900: var(--slate-900);
+  --color-slate-800: var(--slate-800);
+  --color-slate-700: var(--slate-700);
+  --color-slate-600: var(--slate-600);
+  --color-slate-500: var(--slate-500);
+  --color-slate-400: var(--slate-400);
+  --color-slate-300: var(--slate-300);
+  --color-slate-200: var(--slate-200);
+  --color-slate-100: var(--slate-100);
+
+  /* Map accent colors to CSS variables so they support light theme swap natively */
+  --color-red-500: var(--red-500);
+  --color-red-400: var(--red-400);
+  --color-red-300: var(--red-300);
+
+  --color-emerald-500: var(--emerald-500);
+  --color-emerald-400: var(--emerald-400);
+  --color-emerald-300: var(--emerald-300);
+
+  --color-amber-500: var(--amber-500);
+  --color-amber-400: var(--amber-400);
+  --color-amber-300: var(--amber-300);
+
+  --color-violet-600: var(--violet-600);
+  --color-violet-500: var(--violet-500);
+  --color-violet-400: var(--violet-400);
+  --color-violet-300: var(--violet-300);
+
+  --color-indigo-600: var(--indigo-600);
+  --color-indigo-500: var(--indigo-500);
+  --color-indigo-400: var(--indigo-400);
+  --color-indigo-300: var(--indigo-300);
+
+  --color-blue-500: var(--blue-500);
+  --color-blue-400: var(--blue-400);
+  --color-blue-300: var(--blue-300);
+
+  --color-pink-500: var(--pink-500);
+  --color-pink-400: var(--pink-400);
+  --color-pink-300: var(--pink-300);
+
+  --color-rose-500: var(--rose-500);
+  --color-rose-400: var(--rose-400);
+  --color-rose-300: var(--rose-300);
+
+  --color-cyan-500: var(--cyan-500);
+  --color-cyan-400: var(--cyan-400);
+  --color-cyan-300: var(--cyan-300);
+
+  --color-teal-500: var(--teal-500);
+  --color-teal-400: var(--teal-400);
+  --color-teal-300: var(--teal-300);
+
+  --color-purple-500: var(--purple-500);
+  --color-purple-400: var(--purple-400);
+  --color-purple-300: var(--purple-300);
+}
+
+:root {
+  --slate-950: #020617;
+  --slate-900: #0f172a;
+  --slate-800: #1e293b;
+  --slate-700: #334155;
+  --slate-600: #475569;
+  --slate-500: #64748b;
+  --slate-400: #94a3b8;
+  --slate-300: #cbd5e1;
+  --slate-200: #e2e8f0;
+  --slate-100: #f1f5f9;
+
+  /* Standard dark mode accent values */
+  --red-500: #ef4444;
+  --red-400: #f87171;
+  --red-300: #fca5a5;
+
+  --emerald-500: #10b981;
+  --emerald-400: #34d399;
+  --emerald-300: #6ee7b7;
+
+  --amber-500: #f59e0b;
+  --amber-400: #fbbf24;
+  --amber-300: #fcd34d;
+
+  --violet-600: #7c3aed;
+  --violet-500: #8b5cf6;
+  --violet-400: #a78bfa;
+  --violet-300: #c4b5fd;
+
+  --indigo-600: #4f46e5;
+  --indigo-500: #6366f1;
+  --indigo-400: #818cf8;
+  --indigo-300: #a5b4fc;
+
+  --blue-500: #3b82f6;
+  --blue-400: #60a5fa;
+  --blue-300: #93c5fd;
+
+  --pink-500: #ec4899;
+  --pink-400: #f472b6;
+  --pink-300: #f9a8d4;
+
+  --rose-500: #f43f5e;
+  --rose-400: #fb7185;
+  --rose-300: #fda4af;
+
+  --cyan-500: #06b6d4;
+  --cyan-400: #22d3ee;
+  --cyan-300: #67e8f9;
+
+  --teal-500: #14b8a6;
+  --teal-400: #2dd4bf;
+  --teal-300: #5eead4;
+
+  --purple-500: #a855f7;
+  --purple-400: #c084fc;
+  --purple-300: #d8b4fe;
+}
+
+.theme-light {
+  --slate-950: #f1f5f9;
+  --slate-900: #ffffff;
+  --slate-800: #e2e8f0;
+  --slate-700: #cbd5e1;
+  --slate-600: #475569; /* Darker gray for readable subtexts/timestamps */
+  --slate-500: #334155; /* Darker secondary text */
+  --slate-400: #1e293b; /* Dark regular text */
+  --slate-300: #1e293b;
+  --slate-200: #0f172a;
+  --slate-100: #0f172a;
+
+  /* Premium vibrant light mode values (Rose, Teal, Orange) */
+  --red-500: #e11d48;
+  --red-400: #f43f5e;
+  --red-300: #fda4af;
+
+  --emerald-500: #0d9488;
+  --emerald-400: #14b8a6;
+  --emerald-300: #99f6e4;
+
+  --amber-500: #ea580c;
+  --amber-400: #f97316;
+  --amber-300: #ffc996;
+
+  --violet-600: #4c1d95;
+  --violet-500: #4c1d95;
+  --violet-400: #4c1d95;
+  --violet-300: #4c1d95;
+
+  --indigo-600: #312e81;
+  --indigo-500: #312e81;
+  --indigo-400: #312e81;
+  --indigo-300: #312e81;
+
+  --blue-500: #1e3a8a;
+  --blue-400: #1e3a8a;
+  --blue-300: #1e3a8a;
+
+  --pink-500: #831843;
+  --pink-400: #831843;
+  --pink-300: #831843;
+
+  --rose-500: #881337;
+  --rose-400: #881337;
+  --rose-300: #881337;
+
+  --cyan-500: #164e63;
+  --cyan-400: #164e63;
+  --cyan-300: #164e63;
+
+  --teal-500: #115e59;
+  --teal-400: #115e59;
+  --teal-300: #115e59;
+
+  --purple-500: #581c87;
+  --purple-400: #581c87;
+  --purple-300: #581c87;
+}
+
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #0f172a;
+  background: var(--slate-950);
 }
 ::-webkit-scrollbar-thumb {
-  background: #334155;
+  background: var(--slate-800);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #475569;
+  background: var(--slate-700);
 }
 
 * {
@@ -20,17 +200,231 @@
 }
 
 select, option {
-  background-color: #0f172a;
-  color: #e2e8f0;
+  background-color: var(--slate-900);
+  color: var(--slate-200);
 }
 
 select optgroup {
-  background-color: #0f172a;
-  color: #94a3b8;
+  background-color: var(--slate-900);
+  color: var(--slate-400);
   font-style: normal;
   font-weight: 600;
 }
 
+/* Ensure background transitions are smooth when theme changes */
+body, html {
+  background-color: var(--slate-950);
+  color: var(--slate-100);
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* Light mode overrides for high contrast text and form elements */
+.theme-light h1,
+.theme-light h2,
+.theme-light h3,
+.theme-light h4,
+.theme-light h5,
+.theme-light h6 {
+  color: var(--slate-100) !important;
+}
+
+/* Force text-violet-400, text-violet-300, text-indigo-400 etc. to be dark and legible in light theme */
+.theme-light .text-violet-400,
+.theme-light .text-violet-350,
+.theme-light .text-violet-300 {
+  color: #6d28d9 !important;
+}
+
+.theme-light .text-indigo-400,
+.theme-light .text-indigo-300 {
+  color: #4338ca !important;
+}
+
+.theme-light .text-emerald-400,
+.theme-light .text-emerald-350,
+.theme-light .text-emerald-300 {
+  color: #0f766e !important;
+}
+
+.theme-light .text-red-300,
+.theme-light .text-red-400,
+.theme-light .text-red-450,
+.theme-light .text-red-400\/60 {
+  color: #be123c !important;
+}
+
+.theme-light .text-amber-400,
+.theme-light .text-amber-350,
+.theme-light .text-amber-300,
+.theme-light .text-amber-300\/80 {
+  color: #c2410c !important;
+}
+
+.theme-light .text-blue-400,
+.theme-light .text-blue-350,
+.theme-light .text-blue-300 {
+  color: #1d4ed8 !important;
+}
+
+/* Ensure all light-theme borders are clearly visible with high definition */
+.theme-light .border-slate-950,
+.theme-light .border-slate-900,
+.theme-light .border-slate-850,
+.theme-light .border-slate-800,
+.theme-light .border-slate-750,
+.theme-light .border-slate-700,
+.theme-light .border-slate-600,
+.theme-light .border-slate-500,
+.theme-light .border-slate-400,
+.theme-light .border-slate-300 {
+  border-color: #94a3b8 !important;
+}
+
+/* Force legibility and colors on translucent status badges and background elements in light mode */
+.theme-light .bg-emerald-500\/10,
+.theme-light .bg-emerald-500\/20,
+.theme-light .border-emerald-500\/20 {
+  background-color: rgba(13, 148, 136, 0.12) !important;
+  border-color: rgba(13, 148, 136, 0.35) !important;
+  color: #0f766e !important;
+}
+
+.theme-light .bg-red-500\/10,
+.theme-light .bg-red-500\/15,
+.theme-light .bg-red-500\/20,
+.theme-light .border-red-500\/20 {
+  background-color: rgba(225, 29, 72, 0.12) !important;
+  border-color: rgba(225, 29, 72, 0.35) !important;
+  color: #be123c !important;
+}
+
+.theme-light .bg-amber-500\/10,
+.theme-light .border-amber-500\/20 {
+  background-color: rgba(234, 88, 12, 0.12) !important;
+  border-color: rgba(234, 88, 12, 0.35) !important;
+  color: #c2410c !important;
+}
+
+.theme-light .bg-blue-500\/10,
+.theme-light .border-blue-500\/20 {
+  background-color: rgba(59, 130, 246, 0.12) !important;
+  border-color: rgba(59, 130, 246, 0.35) !important;
+  color: #1d4ed8 !important;
+}
+
+.theme-light .bg-violet-500\/10,
+.theme-light .bg-violet-650\/20,
+.theme-light .bg-violet-600\/20,
+.theme-light .bg-violet-400\/5 {
+  background-color: rgba(139, 92, 246, 0.12) !important;
+  border-color: rgba(139, 92, 246, 0.35) !important;
+  color: #6d28d9 !important;
+}
+
+.theme-light .bg-indigo-500\/10 {
+  background-color: rgba(99, 102, 241, 0.12) !important;
+  border-color: rgba(99, 102, 241, 0.35) !important;
+  color: #4338ca !important;
+}
+
+.theme-light .bg-slate-700\/50,
+.theme-light .border-slate-600\/30 {
+  background-color: rgba(71, 85, 105, 0.1) !important;
+  border-color: rgba(71, 85, 105, 0.35) !important;
+  color: #475569 !important;
+}
+
+/* Hover overrides in light theme */
+.theme-light .hover\:text-red-400:hover {
+  color: #be123c !important;
+}
+
+.theme-light .hover\:bg-red-500\/10:hover {
+  background-color: rgba(225, 29, 72, 0.15) !important;
+}
+
+.theme-light .hover\:text-white:hover {
+  color: var(--slate-100) !important;
+}
+
+/* Force text-white to be dark slate in light mode */
+.theme-light .text-white {
+  color: var(--slate-100) !important;
+}
+
+/* Force group hover text-white and absolute hovers to turn dark slate in light mode to prevent invisible text on white card background hover */
+.theme-light .group:hover .group-hover\:text-white {
+  color: var(--slate-100) !important;
+}
+.theme-light .hover\:text-white:hover {
+  color: var(--slate-100) !important;
+}
+
+/* Restore white color ONLY for elements that originally have the .text-white class, when they are inside buttons, badges or solid colored backgrounds (WITHOUT slashes / which indicate translucent backgrounds) */
+.theme-light button.text-white,
+.theme-light button .text-white,
+.theme-light a.text-white,
+.theme-light a .text-white,
+.theme-light [class*="bg-violet"]:not([class*="/"]) .text-white,
+.theme-light [class*="bg-violet"]:not([class*="/"]).text-white,
+.theme-light [class*="bg-indigo"]:not([class*="/"]) .text-white,
+.theme-light [class*="bg-indigo"]:not([class*="/"]).text-white,
+.theme-light [class*="bg-emerald"]:not([class*="/"]) .text-white,
+.theme-light [class*="bg-emerald"]:not([class*="/"]).text-white,
+.theme-light [class*="bg-red"]:not([class*="/"]) .text-white,
+.theme-light [class*="bg-red"]:not([class*="/"]).text-white,
+.theme-light [class*="bg-blue"]:not([class*="/"]) .text-white,
+.theme-light [class*="bg-blue"]:not([class*="/"]).text-white,
+.theme-light [class*="bg-purple"]:not([class*="/"]) .text-white,
+.theme-light [class*="bg-purple"]:not([class*="/"]).text-white,
+.theme-light [class*="bg-green"]:not([class*="/"]) .text-white,
+.theme-light [class*="bg-green"]:not([class*="/"]).text-white,
+.theme-light [class*="bg-amber"]:not([class*="/"]) .text-white,
+.theme-light [class*="bg-amber"]:not([class*="/"]).text-white,
+.theme-light [class*="bg-pink"]:not([class*="/"]) .text-white,
+.theme-light [class*="bg-pink"]:not([class*="/"]).text-white,
+.theme-light [class*="bg-rose"]:not([class*="/"]) .text-white,
+.theme-light [class*="bg-rose"]:not([class*="/"]).text-white,
+.theme-light [class*="bg-cyan"]:not([class*="/"]) .text-white,
+.theme-light [class*="bg-cyan"]:not([class*="/"]).text-white,
+.theme-light [class*="bg-teal"]:not([class*="/"]) .text-white,
+.theme-light [class*="bg-teal"]:not([class*="/"]).text-white,
+.theme-light [class*="bg-gradient"] .text-white,
+.theme-light [class*="bg-gradient"].text-white,
+.theme-light [class*="badge"] .text-white,
+.theme-light [class*="badge"].text-white,
+.theme-light [class*="btn"] .text-white,
+.theme-light [class*="btn"].text-white {
+  color: #ffffff !important;
+}
+
+.theme-light select {
+  color: #1e293b !important;
+  background-color: #ffffff !important;
+  border-color: #cbd5e1 !important;
+}
+
+.theme-light select option {
+  color: #1e293b !important;
+  background-color: #ffffff !important;
+}
+
+.theme-light select optgroup {
+  color: #475569 !important;
+  background-color: #ffffff !important;
+}
+
+.theme-light input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+.theme-light textarea {
+  color: #1e293b !important;
+  background-color: #ffffff !important;
+  border-color: #cbd5e1 !important;
+}
+
+.theme-light input::placeholder,
+.theme-light textarea::placeholder {
+  color: #94a3b8 !important;
+}
 
 @media print {
   aside {
