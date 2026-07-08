@@ -58,7 +58,7 @@
 ### Шаг 2: Клонирование проекта
 
 ```bash
-git clone <URL-репозитория> project_management_system
+git clone <https://github.com/RvadRA/project-management-system.git> project_management_system
 cd project_management_system
 ```
 
@@ -150,7 +150,7 @@ node --version
 ### Шаг 2: Клонирование и подготовка проекта
 
 ```bash
-git clone <URL-репозитория> project_management_system
+git clone <https://github.com/RvadRA/project-management-system.git> project_management_system
 cd project_management_system
 
 # Создание виртуального окружения
@@ -254,7 +254,7 @@ python manage.py createsuperuser
 # Password: admin123
 
 # Загрузка тестовых данных
-python manage.py populate_templates
+python manage.py ?
 ```
 
 ### Шаг 8: Установка Frontend зависимостей
