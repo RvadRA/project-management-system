@@ -23,7 +23,7 @@ export default function Login() {
         password,
       });
       const { access, refresh } = response.data;
-      login(access, refresh);
+      await login(access, refresh);
       navigate('/');
     } catch (err: any) {
       if (err.response?.status === 401) {
