@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import { Briefcase, Lock, User as UserIcon } from 'lucide-react';
+import { API_BASE_URL } from '../api/client';
 
 export default function Login() {
   const [username, setUsername] = useState('');
@@ -18,7 +19,7 @@ export default function Login() {
     setLoading(true);
 
     try {
-      const response = await axios.post('http://localhost:8000/api/auth/token/', {
+      const response = await axios.post(`${API_BASE_URL}/auth/token/`, {
         username,
         password,
       });

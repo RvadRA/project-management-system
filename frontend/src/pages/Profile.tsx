@@ -7,6 +7,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { toast } from 'react-hot-toast';
 import api from '../api/client';
+import { ROLE_LABELS } from '../utils/roles';
 
 export default function Profile() {
   const { user, updateUserLocal } = useAuth();
@@ -41,7 +42,7 @@ export default function Profile() {
     e.preventDefault();
     setLoading(true);
     try {
-      const response = await api.patch(`/users/${user?.id}/`, formData);
+      const response = await api.patch('/users/me/', formData);
       updateUserLocal(response.data);
       toast.success('Профиль успешно обновлен');
     } catch (err: any) {
@@ -67,7 +68,7 @@ export default function Profile() {
           <h1 className="text-3xl font-bold text-white tracking-tight">Настройки профиля</h1>
           <p className="text-slate-400 mt-1.5 flex items-center gap-2">
             <Shield size={14} className="text-violet-400" />
-            {user?.role === 'ADMIN' ? 'Администратор системы' : user?.role === 'MANAGER' ? 'Менеджер проектов' : 'Сотрудник'}
+            {ROLE_LABELS[user?.role ?? ''] ?? 'Исполнитель'}
           </p>
         </div>
       </div>

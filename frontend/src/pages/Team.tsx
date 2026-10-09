@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, Zap, ChevronRight, UserPlus, X, Plus, Edit2, Trash2, Save } from 'lucide-react';
 import { useAppContext, type Employee } from '../context/AppContext';
+import { useAuth } from '../context/AuthContext';
+import { isAdmin, canManageStaff } from '../utils/roles';
 import { toast } from 'react-hot-toast';
 import { niceConfirm } from '../utils/confirm';
 import api from '../api/client';
@@ -45,6 +47,10 @@ function LoadBadge({ load }: { load: number }) {
 export default function Team() {
   const { employees, skills, domains, createEmployee, updateEmployee, deleteEmployee, addSkillToEmployee, deleteEmployeeSkill, addCertificateToEmployee, deleteEmployeeCertificate, addUnavailabilityToEmployee, deleteEmployeeUnavailability, extractError, refreshData } = useAppContext();
   const navigate = useNavigate();
+  const { user } = useAuth();
+  // Учётные записи создаёт и удаляет только администратор; профили правит ещё и руководитель проектов
+  const canManageAccounts = isAdmin(user);
+  const canEditProfiles = canManageStaff(user);
   const [activeTab, setActiveTab] = useState<'members' | 'availability'>('members');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Employee | null>(null);
@@ -231,12 +237,14 @@ export default function Team() {
                   Доступность
                 </button>
              </div>
-             <button
-               onClick={() => { setIsModalOpen(true); setError(''); }}
-               className="flex items-center gap-2 bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium px-4 py-2.5 rounded-lg transition-colors shadow-lg shadow-violet-500/20"
-             >
-               <UserPlus size={16} /> Добавить сотрудника
-             </button>
+             {canManageAccounts && (
+               <button
+                 onClick={() => { setIsModalOpen(true); setError(''); }}
+                 className="flex items-center gap-2 bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium px-4 py-2.5 rounded-lg transition-colors shadow-lg shadow-violet-500/20"
+               >
+                 <UserPlus size={16} /> Добавить сотрудника
+               </button>
+             )}
           </div>
         </div>
 
@@ -400,7 +408,7 @@ export default function Team() {
               <X size={18} />
             </button>
             <div className="flex gap-2">
-              {isEditing ? (
+              {canEditProfiles && (isEditing ? (
                 <button onClick={handleUpdate} className="p-2 text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-colors">
                   <Save size={16} />
                 </button>
@@ -408,10 +416,12 @@ export default function Team() {
                 <button onClick={() => handleStartEdit(selected)} className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors">
                   <Edit2 size={16} />
                 </button>
+              ))}
+              {canManageAccounts && (
+                <button onClick={() => handleDelete(selected)} className="p-2 text-red-400/60 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors">
+                  <Trash2 size={16} />
+                </button>
               )}
-              <button onClick={() => handleDelete(selected)} className="p-2 text-red-400/60 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors">
-                <Trash2 size={16} />
-              </button>
             </div>
           </div>
           <div className="flex flex-col items-center text-center mb-6">

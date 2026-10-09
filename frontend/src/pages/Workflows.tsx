@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { useAppContext } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
+import { hasGlobalAccess, isStaff, projectPerms } from '../utils/roles';
 import { toast } from 'react-hot-toast';
 import { niceConfirm } from '../utils/confirm';
 
@@ -140,14 +141,25 @@ export default function Workflows() {
     return projects.find(p => p.id === activeProcess?.project) ?? null;
   }, [projects, activeProcess]);
 
-  const isSystemManager = useMemo(() => {
-    return user?.role === 'ADMIN' || user?.role === 'MANAGER';
-  }, [user]);
+  // Шаблоны процессов ведут администратор, руководитель проектов и менеджеры
+  const canManageTemplates = isStaff(user);
 
-  const canCreateProcess = isSystemManager;
-  const canManageTasks = isSystemManager;
+  // Процессы создают те, у кого есть право редактирования задач хотя бы в одном проекте
+  const editableProjects = useMemo(
+    () => projects.filter(p => projectPerms(p).can_edit_tasks),
+    [projects],
+  );
+  const canCreateProcess = editableProjects.length > 0;
 
-  const isManager = isSystemManager;
+  // Управление задачами — по правам в проекте активного процесса;
+  // независимым процессом управляет его автор (или администратор / руководитель)
+  const canManageTasks = useMemo(() => {
+    if (!activeProcess) return false;
+    if (activeProcess.project) return projectPerms(currentProject).can_edit_tasks;
+    return hasGlobalAccess(user) || (canManageTemplates && activeProcess.created_by === user?.id);
+  }, [activeProcess, currentProject, user, canManageTemplates]);
+
+  const isManager = canManageTasks;
 
   const projectMemberUserIds = useMemo(() => {
     return new Set(currentProject?.members.map(m => m.user.id) || []);
@@ -175,7 +187,8 @@ export default function Workflows() {
   };
   const handleDrop = async (e: React.DragEvent, status: TaskStatus) => {
     e.preventDefault();
-    if (!isManager) return;
+    const dragged = processTasks.find(t => t.id === draggedTaskId);
+    if (!isManager && dragged?.assigned_to !== user?.id) return;
     if (draggedTaskId !== null) {
       await updateTaskStatus(draggedTaskId, status);
       setDraggedTaskId(null);
@@ -325,7 +338,7 @@ export default function Workflows() {
 
   const handleSaveTemplate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isManager) return;
+    if (!canManageTemplates) return;
     try {
       if (editingTemplate) await updateTemplate(editingTemplate.id, templateFormData);
       else await createTemplate(templateFormData);
@@ -338,7 +351,7 @@ export default function Workflows() {
 
   const handleSaveTaskTemplate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isManager) return;
+    if (!canManageTemplates) return;
     try {
       if (editingTaskTemplate) await updateTaskTemplate(editingTaskTemplate.id, taskTemplateFormData);
       else await createTaskTemplate(taskTemplateFormData);
@@ -360,7 +373,7 @@ export default function Workflows() {
         </div>
 
         <div className="flex items-center gap-3">
-          {(canCreateProcess || canManageTasks) && (
+          {canManageTemplates && (
             <div className="flex bg-slate-900 border border-slate-800 rounded-lg p-1 mr-2">
               <button 
                 onClick={() => setActiveTab('active')}
@@ -387,7 +400,7 @@ export default function Workflows() {
               </button>
             )
           ) : (
-            canManageTasks && (
+            canManageTemplates && (
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => navigate('/workflows/editor')}
@@ -726,7 +739,7 @@ export default function Workflows() {
                          <span className={`text-[8px] font-bold px-1 rounded ${taskTypeConfig[tt.task_type]?.color || ''}`}>
                             {tt.task_type.split('_')[0]}
                          </span>
-                          {canManageTasks && (
+                          {canManageTemplates && (
                             <>
                               <button 
                                 onClick={() => { setEditingTaskTemplate(tt); setTaskTemplateFormData(tt); setIsTaskTemplateModalOpen(true); }}
@@ -745,7 +758,7 @@ export default function Workflows() {
                       </div>
                    </div>
                  ))}
-                 {canManageTasks && (
+                 {canManageTemplates && (
                    <button 
                      onClick={() => { 
                        setEditingTaskTemplate(null); 
@@ -808,11 +821,7 @@ export default function Workflows() {
                   className="w-full bg-slate-800 border border-slate-700 text-slate-200 text-sm rounded-xl px-4 py-2.5 focus:outline-none focus:border-violet-500"
                 >
                   <option value="">Выберите проект...</option>
-                  {projects.filter(p => {
-                    if (user?.role === 'ADMIN' || user?.role === 'MANAGER') return true;
-                    const isMgr = p.members?.some(m => m.user.id === user?.id && m.role === 'MANAGER');
-                    return (p.status === 'ACTIVE' || p.status === 'AT_RISK') && isMgr;
-                  }).map(p => (
+                  {editableProjects.map(p => (
                     <option key={p.id} value={p.id}>{p.name}</option>
                   ))}
                 </select>

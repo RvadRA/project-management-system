@@ -1,14 +1,16 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Search, ArrowUpRight, Calendar, Users, X, Copy, FolderOpen, Trash2, Edit2, Save, ListTree, GitMerge, History, Zap, AlertTriangle } from 'lucide-react';
+import { Plus, Search, ArrowUpRight, Calendar, Users, X, Copy, FolderOpen, Trash2, Edit2, Save, ListTree, GitMerge, History, Zap, AlertTriangle, Paperclip, ShieldCheck } from 'lucide-react';
 import api from '../api/client';
 import { useAppContext } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
 import { toast } from 'react-hot-toast';
 import { niceConfirm } from '../utils/confirm';
-import type { Project, PlanningBlock } from '../context/AppContext';
+import type { Project, PlanningBlock, ProjectMember } from '../context/AppContext';
 import TransferWizard from '../components/TransferWizard';
 import GanttChart from '../components/GanttChart';
+import ProjectFiles from '../components/ProjectFiles';
+import { isStaff, projectPerms, MEMBER_PERMISSIONS } from '../utils/roles';
 
 // Status labels in Russian
 const statusMap: Record<string, string> = {
@@ -45,9 +47,18 @@ const domainColor: Record<string, string> = {
 
 type ModalMode = 'none' | 'create' | 'import' | 'edit' | 'detail';
 
+// Встроенные роли участника проекта (ProjectMember.ROLE_CHOICES), кроме менеджера
+const BUILTIN_MEMBER_ROLES: Record<string, string> = {
+  DEVELOPER: 'Исполнитель',
+  ANALYST: 'Аналитик',
+  DESIGNER: 'Дизайнер',
+  QA: 'Тестировщик',
+};
+
 const WBSTaskItem = ({ 
   task, 
-  isManager, 
+  isManager,
+  canAssign,
   handleShift, 
   handleRecalculate,
   handleCreateTask,
@@ -209,9 +220,8 @@ const WBSTaskItem = ({
                 WF
               </button>
             )}
-            {isManager && (
-              <>
-                <button 
+            {canAssign && (
+                <button
                   onClick={async () => {
                     try {
                       const res = await api.get(`/projects/tasks/${task.id}/suggest_assignee/`);
@@ -228,7 +238,10 @@ const WBSTaskItem = ({
                 >
                   <Zap size={12} />
                 </button>
-                <button 
+            )}
+            {isManager && (
+              <>
+                <button
                   onClick={() => setAddingTaskToBlockId(`task-${task.id}`)}
                   className="p-1 text-slate-500 hover:text-violet-400" title="Добавить подзадачу"
                 >
@@ -335,6 +348,7 @@ const WBSTaskItem = ({
                 key={sub.id || `temp-${wbsNumber}-${idx}`} 
                 task={sub} 
                 isManager={isManager}
+                canAssign={canAssign}
                 depth={depth + 1}
                 wbsNumber={`${wbsNumber}.${idx + 1}`}
                 blockId={blockId}
@@ -362,7 +376,8 @@ const WBSTaskItem = ({
 };
 const WBSBlockItem = ({ 
   block, 
-  isManager, 
+  isManager,
+  canAssign,
   handleUpdateBlock, 
   handleDeleteBlock, 
   handleShift, 
@@ -446,6 +461,7 @@ const WBSBlockItem = ({
                 key={task.id} 
                 task={task} 
                 isManager={isManager}
+                canAssign={canAssign}
                 wbsNumber={`${wbsNumber}.${idx + 1}`}
                 blockId={block.id}
                 handleShift={handleShift}
@@ -510,6 +526,7 @@ const WBSBlockItem = ({
               key={child.id} 
               block={child} 
               isManager={isManager}
+                canAssign={canAssign}
               depth={depth + 1}
               wbsNumber={`${wbsNumber}.${idx + 1}`}
               handleUpdateBlock={handleUpdateBlock}
@@ -550,21 +567,26 @@ function ProjectDetailPanel({
   wizardSource: Project | PlanningBlock | null;
   setWizardSource: (source: Project | PlanningBlock | null) => void;
 }) {
-  const { employees, addMemberToProject, updateProject, deleteProject, users, removeMemberFromProject, fetchAuditLogs, auditLogs, recalculateSchedule, shiftTask, globalRoles, domains, extractError, risks, planningBlocks } = useAppContext();
+  const { employees, addMemberToProject, setMemberPermissions, updateProject, deleteProject, users, removeMemberFromProject, fetchAuditLogs,auditLogs, recalculateSchedule, shiftTask, globalRoles, domains, extractError, risks, planningBlocks } = useAppContext();
   const { user } = useAuth();
   const navigate = useNavigate();
-  const isSystemManager = useMemo(() => {
-    return user?.role === 'ADMIN' || user?.role === 'MANAGER';
-  }, [user]);
+  // Права в рамках этого проекта (менеджер проекта, руководитель и администратор имеют все)
+  const perms = useMemo(() => projectPerms(project), [project]);
+  const isManager = perms.is_manager;
+  const canEditTasks = perms.can_edit_tasks;
+  const canAssign = perms.can_assign_tasks;
+  const canManageMembers = perms.can_manage_members;
+  const canDelete = perms.is_manager;
 
-  const isManager = useMemo(() => {
-    // Strict RBAC: only system managers can perform administrative actions
-    return isSystemManager;
-  }, [isSystemManager]);
+  type DetailTab = 'details' | 'team' | 'gantt' | 'files' | 'history';
+  const visibleTabs = useMemo(() => {
+    const tabs: DetailTab[] = ['details', 'team', 'gantt'];
+    if (perms.can_view_files) tabs.push('files');
+    if (perms.is_manager) tabs.push('history'); // журнал аудита доступен только менеджерам
+    return tabs;
+  }, [perms]);
 
-  const canDelete = isSystemManager;
-  
-  const [activeTab, setActiveTab] = useState<'details' | 'team' | 'gantt' | 'history'>('details');
+  const [activeTab, setActiveTab] = useState<DetailTab>('details');
   const [wbsView, setWbsView] = useState<'tree' | 'gantt'>('tree');
   const [projectBlocks, setProjectBlocks] = useState<PlanningBlock[]>([]);
   const [loadingBlocks, setLoadingBlocks] = useState(false);
@@ -573,8 +595,6 @@ function ProjectDetailPanel({
   const [selectedUserId, setSelectedUserId] = useState<number | ''>('');
   const [selectedRole, setSelectedRole] = useState('DEVELOPER');
   const [selectedLoad, setSelectedLoad] = useState(100);
-  const [selectedStart, setSelectedStart] = useState('');
-  const [selectedEnd, setSelectedEnd] = useState('');
   const [aiSuggestion, setAiSuggestion] = useState<any>(null);
   const [preview, setPreview] = useState<any>(null);
   const [adding, setAdding] = useState(false);
@@ -769,7 +789,7 @@ function ProjectDetailPanel({
     }
   };
 
-  const handleTabChange = (tab: 'details' | 'team' | 'gantt' | 'history') => {
+  const handleTabChange = (tab: DetailTab) => {
     setActiveTab(tab);
     if (tab === 'history') fetchAuditLogs(project.id);
     if (tab === 'gantt') fetchProjectBlocks();
@@ -898,7 +918,7 @@ function ProjectDetailPanel({
               </span>
               <select
                 value={project.status}
-                disabled={updatingStatus}
+                disabled={updatingStatus || !isManager}
                 onChange={e => handleStatusChange(e.target.value)}
                 className={`text-xs px-2 py-0.5 rounded-full border font-medium bg-transparent focus:outline-none cursor-pointer ${statusStyle[project.status] ?? statusStyle.DRAFT} disabled:opacity-50`}
               >
@@ -1013,7 +1033,7 @@ function ProjectDetailPanel({
         )}
 
         <div className="flex items-center gap-4 border-b border-slate-800 mb-6">
-          {(['details', 'team', 'gantt', 'history'] as const).map(tab => (
+          {visibleTabs.map(tab => (
             <button
               key={tab}
               onClick={() => handleTabChange(tab)}
@@ -1026,6 +1046,7 @@ function ProjectDetailPanel({
               {tab === 'details' && <><Plus size={14}/> Детали</>}
               {tab === 'team' && <><Users size={14}/> Команда</>}
               {tab === 'gantt' && <><ListTree size={14}/> WBS / План</>}
+              {tab === 'files' && <><Paperclip size={14}/> Файлы</>}
               {tab === 'history' && <><History size={14}/> Логи</>}
             </button>
           ))}
@@ -1141,77 +1162,129 @@ function ProjectDetailPanel({
           <div className="space-y-6">
             <div className="space-y-2">
               <p className="text-xs text-slate-500 uppercase tracking-wider mb-3">Команда проекта ({project.members?.length ?? 0} чел.)</p>
-              {project.members?.map((m: any) => {
-                const isProjectManager = project.manager?.id === m.user.id;
+              {project.members?.map((m: ProjectMember) => {
+                // Менеджеров в проекте может быть несколько; «ответственный» — тот, кто указан в карточке проекта
+                const isPrimaryManager = project.manager?.id === m.user.id;
+                const memberIsManager = m.is_manager ?? m.role === 'MANAGER';
                 const emp = employees.find(e => e.user.id === m.user.id);
+                const canRemove = canManageMembers && !isPrimaryManager && (!memberIsManager || isManager);
                 return (
-                  <div key={m.id} className="flex items-center gap-3 p-3 bg-slate-800/20 border border-slate-800/50 rounded-xl group/member transition-all hover:bg-slate-800/40">
-                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-xs font-bold text-white flex-shrink-0 bg-gradient-to-br ${isProjectManager ? 'from-blue-500 to-indigo-500 ring-2 ring-blue-500/50' : 'from-slate-600 to-slate-700'}`}>
-                      {m.user.full_name.substring(0, 1)}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-slate-200 truncate">{m.user.full_name}</p>
-                      {isManager && !isProjectManager ? (
-                        <select
-                          value={m.role_ref ? m.role_ref : m.role}
-                          onChange={(e) => handleUpdateMemberRole(m.user.id, e.target.value, m.allocation_percentage)}
-                          className="bg-transparent border-none p-0 text-[10px] uppercase tracking-wider font-bold mt-0.5 text-violet-400 focus:ring-0 cursor-pointer hover:text-violet-300"
-                        >
-                          <option value="MANAGER" disabled={m.role !== 'MANAGER' && project.members?.some(member => member.role === 'MANAGER')}>
-                            Project Manager
-                          </option>
-                          <optgroup label="Глобальные роли">
-                            {globalRoles.map(r => (
-                              <option key={r.id} value={r.id}>{r.name}</option>
-                            ))}
-                          </optgroup>
-                        </select>
-                      ) : (
-                        <p className={`text-[10px] uppercase tracking-wider font-bold mt-0.5 ${isProjectManager ? 'text-blue-400' : 'text-slate-500'}`}>
-                          {isProjectManager ? 'Project Manager' : (m.role_info?.name || m.role)}
+                  <div key={m.id} className="p-3 bg-slate-800/20 border border-slate-800/50 rounded-xl group/member transition-all hover:bg-slate-800/40">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-xs font-bold text-white flex-shrink-0 bg-gradient-to-br ${memberIsManager ? 'from-blue-500 to-indigo-500 ring-2 ring-blue-500/50' : 'from-slate-600 to-slate-700'}`}>
+                        {m.user.full_name.substring(0, 1)}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-slate-200 truncate">
+                          {m.user.full_name}
+                          {isPrimaryManager && (
+                            <span className="ml-2 text-[9px] font-bold text-blue-300 bg-blue-500/10 border border-blue-500/20 px-1.5 py-0.5 rounded uppercase tracking-wider align-middle">
+                              Ответственный
+                            </span>
+                          )}
                         </p>
+                        {isManager && !isPrimaryManager ? (
+                          <select
+                            value={memberIsManager ? 'MANAGER' : (m.role_ref ? m.role_ref : m.role)}
+                            onChange={(e) => handleUpdateMemberRole(m.user.id, e.target.value, m.allocation_percentage)}
+                            className="bg-transparent border-none p-0 text-[10px] uppercase tracking-wider font-bold mt-0.5 text-violet-400 focus:ring-0 cursor-pointer hover:text-violet-300"
+                          >
+                            <option value="MANAGER">Менеджер проекта</option>
+                            {Object.entries(BUILTIN_MEMBER_ROLES).map(([value, label]) => (
+                              <option key={value} value={value}>{label}</option>
+                            ))}
+                            {/* Нестандартная роль из старых данных — иначе select показал бы первую опцию */}
+                            {!memberIsManager && !m.role_ref && !(m.role in BUILTIN_MEMBER_ROLES) && (
+                              <option value={m.role}>{m.role}</option>
+                            )}
+                            <optgroup label="Глобальные роли">
+                              {globalRoles.map(r => (
+                                <option key={r.id} value={r.id}>{r.name}</option>
+                              ))}
+                            </optgroup>
+                          </select>
+                        ) : (
+                          <p className={`text-[10px] uppercase tracking-wider font-bold mt-0.5 ${memberIsManager ? 'text-blue-400' : 'text-slate-500'}`}>
+                            {memberIsManager ? 'Менеджер проекта' : (m.role_info?.name || BUILTIN_MEMBER_ROLES[m.role] || m.role)}
+                          </p>
+                        )}
+                      </div>
+                      <div className="text-right flex flex-col items-end gap-1">
+                        <span className={`text-[10px] font-bold ${m.allocation_percentage > 80 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                          Загрузка: {m.allocation_percentage}%
+                        </span>
+                        {emp && (
+                          <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold border ${
+                            emp.current_workload_percentage > 100 ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+                            emp.current_workload_percentage > 70 ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
+                            'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                          }`}>
+                            Всего: {emp.current_workload_percentage}%
+                          </span>
+                        )}
+                      </div>
+                      {canRemove && (
+                        <button
+                          onClick={() => removeMemberFromProject(project.id, m.user.id)}
+                          className="p-2 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover/member:opacity-100"
+                          title="Исключить из проекта"
+                        >
+                          <Trash2 size={14} />
+                        </button>
                       )}
                     </div>
-                    <div className="text-right flex flex-col items-end gap-1">
-                      <span className={`text-[10px] font-bold ${m.allocation_percentage > 80 ? 'text-amber-400' : 'text-emerald-400'}`}>
-                        Загрузка: {m.allocation_percentage}%
-                      </span>
-                      <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold border ${
-                        (emp?.current_workload_percentage ?? 0) > 100 ? 'bg-red-500/10 text-red-400 border-red-500/20' : 
-                        (emp?.current_workload_percentage ?? 0) > 70 ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 
-                        'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                      }`}>
-                        Всего: {emp?.current_workload_percentage ?? 0}%
-                      </span>
-                    </div>
-                    {isManager && !isProjectManager && (
-                      <button
-                        onClick={() => removeMemberFromProject(project.id, m.user.id)}
-                        className="p-2 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover/member:opacity-100"
-                      >
-                        <Trash2 size={14} />
-                      </button>
+
+                    {/* Права участника: настраивает менеджер проекта, сам участник видит свои права */}
+                    {(isManager || m.user.id === user?.id) && (
+                      <div className="mt-3 pt-3 border-t border-slate-800/60">
+                        {memberIsManager ? (
+                          <p className="text-[10px] text-slate-500 flex items-center gap-1.5">
+                            <ShieldCheck size={12} className="text-blue-400" /> Менеджер проекта — все права включены
+                          </p>
+                        ) : (
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-3 gap-y-1.5">
+                            {MEMBER_PERMISSIONS.map(perm => (
+                              <label
+                                key={perm.key}
+                                title={perm.hint}
+                                className={`flex items-center gap-1.5 text-[10px] ${isManager ? 'cursor-pointer text-slate-300 hover:text-white' : 'text-slate-500'}`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={!!m.permissions?.[perm.key]}
+                                  disabled={!isManager}
+                                  onChange={e => setMemberPermissions(project.id, m.user.id, { [perm.key]: e.target.checked })}
+                                  className="w-3.5 h-3.5 rounded border-slate-600 bg-slate-900 accent-violet-500 disabled:opacity-60"
+                                />
+                                {perm.label}
+                              </label>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
                 );
               })}
             </div>
 
-            {isManager && (
+            {canManageMembers && (
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Управление командой</h4>
-                  <button
-                    onClick={() => {
-                      sessionStorage.setItem('targetProjectId', project.id.toString());
-                      navigate('/matching');
-                    }}
-                    className="flex items-center gap-1.5 text-[10px] font-bold text-violet-400 hover:text-violet-300 bg-violet-500/10 hover:bg-violet-500/20 px-2 py-1 rounded transition-all"
-                  >
-                    <Zap size={12} /> Умный подбор
-                  </button>
+                  {isStaff(user) && (
+                    <button
+                      onClick={() => {
+                        sessionStorage.setItem('targetProjectId', project.id.toString());
+                        navigate('/matching');
+                      }}
+                      className="flex items-center gap-1.5 text-[10px] font-bold text-violet-400 hover:text-violet-300 bg-violet-500/10 hover:bg-violet-500/20 px-2 py-1 rounded transition-all"
+                    >
+                      <Zap size={12} /> Умный подбор
+                    </button>
+                  )}
                 </div>
-                
+
                 <div className="bg-slate-800/40 border border-slate-800 rounded-xl p-4 space-y-4">
                   <p className="text-[10px] text-slate-500 uppercase font-medium">Добавить участника вручную</p>
                   <div className="grid grid-cols-2 gap-3">
@@ -1232,7 +1305,7 @@ function ProjectDetailPanel({
                           );
                         })}
                       </select>
-                      {Number(selectedUserId) && (
+                      {Number(selectedUserId) > 0 && (
                         <p className={`text-[9px] mt-1.5 flex items-center gap-1 font-bold ${ (employees.find(e => e.user.id === Number(selectedUserId))?.current_workload_percentage || 0) > 90 ? 'text-amber-400' : 'text-slate-500' }`}>
                           {(employees.find(e => e.user.id === Number(selectedUserId))?.current_workload_percentage || 0) > 90 && <AlertTriangle size={10} />}
                           Текущая загрузка сотрудника: {employees.find(e => e.user.id === Number(selectedUserId))?.current_workload_percentage || 0}%
@@ -1246,14 +1319,17 @@ function ProjectDetailPanel({
                         onChange={e => setSelectedRole(e.target.value)}
                         className="w-full bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg px-3 py-2.5 focus:outline-none focus:border-violet-500"
                       >
-                        <option value="" disabled>— Выберите роль —</option>
+                        {Object.entries(BUILTIN_MEMBER_ROLES).map(([value, label]) => (
+                          <option key={value} value={value}>{label}</option>
+                        ))}
+                        {/* Назначать менеджеров может только менеджер проекта; их может быть несколько */}
+                        {isManager && <option value="MANAGER">Менеджер проекта</option>}
                         <optgroup label="Глобальные роли">
                           {globalRoles.map(r => {
-                            const isPM = r.name.toLowerCase().includes('manager') || r.name.toLowerCase().includes('менеджер');
-                            const alreadyHasPM = project.members?.some(m => m.role === 'MANAGER' || (m.role_info?.name || '').toLowerCase().includes('manager'));
+                            const isPM = /manager|менеджер|руководитель/i.test(r.name);
                             return (
-                              <option key={r.id} value={r.id} disabled={isPM && alreadyHasPM}>
-                                {r.name} {isPM && alreadyHasPM ? '(уже назначен)' : ''}
+                              <option key={r.id} value={r.id} disabled={isPM && !isManager}>
+                                {r.name}
                               </option>
                             );
                           })}
@@ -1263,16 +1339,6 @@ function ProjectDetailPanel({
                     <div>
                       <label className="block text-[10px] text-slate-500 uppercase mb-1.5">Загрузка %</label>
                       <input type="number" min={1} max={100} value={selectedLoad} onChange={e => setSelectedLoad(Number(e.target.value))}
-                        className="w-full bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg px-3 py-2.5 focus:outline-none focus:border-violet-500" />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] text-slate-500 uppercase mb-1.5">Начало</label>
-                      <input type="date" value={selectedStart} onChange={e => setSelectedStart(e.target.value)}
-                        className="w-full bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg px-3 py-2.5 focus:outline-none focus:border-violet-500" />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] text-slate-500 uppercase mb-1.5">Конец</label>
-                      <input type="date" value={selectedEnd} onChange={e => setSelectedEnd(e.target.value)}
                         className="w-full bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg px-3 py-2.5 focus:outline-none focus:border-violet-500" />
                     </div>
                   </div>
@@ -1315,7 +1381,7 @@ function ProjectDetailPanel({
                   <Calendar size={13} /> Диаграмма Ганта
                 </button>
               </div>
-              {isManager && wbsView === 'tree' && (
+              {canEditTasks && wbsView === 'tree' && (
                 <button
                   onClick={() => setShowAddBlockModal(true)}
                   className="flex items-center gap-1.5 bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-all shadow-lg shadow-violet-900/20"
@@ -1339,8 +1405,8 @@ function ProjectDetailPanel({
                   <div className="text-center py-12 bg-slate-800/20 rounded-2xl border border-dashed border-slate-800">
                     <ListTree size={32} className="mx-auto text-slate-600 mb-3" />
                     <p className="text-sm text-slate-500">В этом проекте пока нет блоков планирования</p>
-                    {isManager && (
-                      <button onClick={() => setShowAddBlockModal(true)} className="mt-4 text-xs text-violet-400 font-bold hover:text-violet-300 transition-colors">
+                    {canEditTasks && (
+                      <button onClick={() => setShowAddBlockModal(true)} className="mt-4text-xs text-violet-400 font-bold hover:text-violet-300 transition-colors">
                         Создать первый этап →
                       </button>
                     )}
@@ -1350,7 +1416,8 @@ function ProjectDetailPanel({
                     <WBSBlockItem
                       key={block.id}
                       block={block}
-                      isManager={isManager}
+                      isManager={canEditTasks}
+                      canAssign={canAssign}
                       wbsNumber={`${idx + 1}`}
                       handleUpdateBlock={handleUpdateBlock}
                       handleDeleteBlock={handleDeleteBlock}
@@ -1438,7 +1505,7 @@ function ProjectDetailPanel({
                       className="w-full bg-slate-950 border border-slate-800 text-slate-300 text-xs rounded-lg px-3 py-2 focus:outline-none focus:border-violet-500"
                     >
                     
-                      <option value="MANAGER" disabled={project.members?.some(m => m.role === 'MANAGER')}>Project Manager</option>
+                      {isManager && <option value="MANAGER">Project Manager</option>}
                       <optgroup label="Глобальные роли">
                         {globalRoles.map(r => (
                           <option key={r.id} value={r.id}>{r.name}</option>
@@ -1459,11 +1526,6 @@ function ProjectDetailPanel({
                     // If role is PM, check for existing and set 100% allocation
                     const isPM = roleName === 'MANAGER' || (isGlobal && (roleName.toLowerCase().includes('manager') || roleName.toLowerCase().includes('менеджер')));
                     
-                    if (isPM && project.members?.some(m => m.role === 'MANAGER')) {
-                      toast.error("В проекте уже есть Project Manager. Выберите другую роль.");
-                      return;
-                    }
-
                     await api.post(`/projects/tasks/${aiSuggestion.taskId}/assign_user/`, {
                       user_id: aiSuggestion.user_id,
                       allow_auto_add: true,
@@ -1563,6 +1625,10 @@ function ProjectDetailPanel({
               />
             )}
           </div>
+        )}
+
+        {activeTab === 'files' && (
+          <ProjectFiles projectId={project.id} canEdit={perms.can_edit_files} />
         )}
 
         {activeTab === 'history' && (
@@ -1779,7 +1845,8 @@ export default function Projects() {
   const closeModal = () => { setModalMode('none'); setError(''); setSelectedProjectId(null); };
 
   const { user } = useAuth();
-  const isManager = user?.role === 'ADMIN' || user?.role === 'MANAGER';
+  // Создавать проекты могут администратор, руководитель проектов и менеджеры
+  const isManager = isStaff(user);
 
   if (loading && projects.length === 0) {
     return (
@@ -1859,7 +1926,7 @@ export default function Projects() {
                 <span className={`text-xs px-2 py-0.5 rounded-md font-medium ${domainColor[project.domain] || 'bg-slate-800 text-slate-400 border border-slate-700'}`}>
                   {project.domain}
                 </span>
-                {isManager && (
+                {isManager && projectPerms(project).is_manager && (
                   <button 
                     onClick={(e) => {
                       e.stopPropagation();

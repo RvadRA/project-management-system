@@ -1,7 +1,8 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
-import api from '../api/client';
+import api, { fetchAllPages } from '../api/client';
 import { useAuth } from './AuthContext';
 import { toast } from 'react-hot-toast';
+import type { MemberPermissionKey, ProjectPermissions } from '../utils/roles';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -10,6 +11,8 @@ export interface UserNested {
   username: string;
   full_name: string;
   email: string;
+  /** Глобальная роль — приходит только в полном списке /users/ */
+  role?: string;
 }
 
 export interface ProjectMember {
@@ -19,6 +22,9 @@ export interface ProjectMember {
   role_ref?: number | null;
   role_info?: { id: number; name: string } | null;
   allocation_percentage: number;
+  /** Менеджер проекта: все права включены независимо от флажков */
+  is_manager?: boolean;
+  permissions?: Record<MemberPermissionKey, boolean>;
 }
 
 export interface Project {
@@ -33,6 +39,8 @@ export interface Project {
   manager: UserNested | null;
   members: ProjectMember[];
   progress_percentage: number;
+  /** Эффективные права текущего пользователя в этом проекте */
+  my_permissions?: ProjectPermissions | null;
   risks?: number[];
   risks_info?: Risk[];
   created_at: string;
@@ -153,6 +161,7 @@ export interface WorkflowProcess {
   status: string;
   template: number | null;
   project: number | null;
+  created_by?: number | null;
   progress_percent: number;
   tasks: KanbanTask[];
 }
@@ -279,6 +288,9 @@ interface AppContextType {
     statuses: Record<string, string>;
     roles: Record<string, string>;
     task_statuses: Record<string, string>;
+    user_roles?: Record<string, string>;
+    member_permissions?: { key: MemberPermissionKey; label: string }[];
+    material_categories?: Record<string, string>;
   } | null;
   loading: boolean;
   extractError: (err: any, defaultMsg: string) => string;
@@ -310,6 +322,7 @@ interface AppContextType {
   addUnavailabilityToEmployee: (profileId: number, data: Partial<Unavailability>) => Promise<void>;
   deleteEmployeeUnavailability: (profileId: number, itemId: number) => Promise<void>;
   addMemberToProject: (projectId: number, userId: number, role: string, allocation: number, roleRefId?: number) => Promise<void>;
+  setMemberPermissions: (projectId: number, userId: number, permissions: Partial<Record<MemberPermissionKey, boolean>>) => Promise<void>;
   assignEmployeeToProject: (empId: number, projectId: number, role: string, load: number, roleRefId?: number) => Promise<void>;
   markNotificationRead: (id: number) => Promise<void>;
   markAllRead: () => Promise<void>;
@@ -392,29 +405,33 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     return [];
   };
 
+  // Списки приходят постранично (PAGE_SIZE=50) — забираем все страницы,
+  // иначе всё после первых 50 записей в интерфейс не попадало
+  const fetchList = (url: string) => fetchAllPages(url).then(items => ({ data: items }));
+
   const fetchAllData = useCallback(async (silent = false) => {
     if (!user) return;
     if (!silent) setLoading(true);
     try {
       const results = await Promise.allSettled([
-        api.get('/projects/list/'),          // 0
-        api.get('/employees/profiles/'),     // 1
-        api.get('/workflows/processes/'),    // 2
-        api.get('/workflows/tasks/my-tasks/'), // 3
-        api.get('/notifications/'),          // 4
-        api.get('/workflows/templates/'),    // 5
-        api.get('/projects/blocks/'),        // 6
-        api.get('/employees/skills/'),       // 7
-        api.get('/users/'),                  // 8
+        fetchList('/projects/list/'),          // 0
+        fetchList('/employees/profiles/'),     // 1
+        fetchList('/workflows/processes/'),    // 2
+        fetchList('/workflows/tasks/my-tasks/'), // 3
+        api.get('/notifications/'),            // 4 (только последние — первая страница)
+        fetchList('/workflows/templates/'),    // 5
+        fetchList('/projects/blocks/'),        // 6
+        fetchList('/employees/skills/'),       // 7
+        fetchList('/users/'),                  // 8
         api.get('/projects/dashboard/').catch(() => ({ data: null })),     // 9
         api.get('/projects/list/metadata/'), // 10
-        api.get('/planning/risks/'),            // 11
-        api.get('/planning/roles/'),            // 12
-        api.get('/planning/domains/'),          // 13
-        api.get('/planning/calendars/'),        // 14
-        api.get('/projects/audit-logs/'),       // 15
-        api.get('/workflows/tasks/'),           // 16
-        api.get('/projects/settings/'),         // 17
+        fetchList('/planning/risks/'),            // 11
+        fetchList('/planning/roles/'),            // 12
+        fetchList('/planning/domains/'),          // 13
+        fetchList('/planning/calendars/'),        // 14
+        api.get('/projects/audit-logs/'),         // 15 (первая страница — свежие записи)
+        fetchList('/workflows/tasks/'),           // 16
+        fetchList('/projects/settings/'),         // 17
       ]);
 
       const safe = (r: PromiseSettledResult<any>) =>
@@ -534,7 +551,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       await fetchAllData();
       toast.success("Задача удалена");
     } catch (err: any) {
-      toast.error("Ошибка при удалении задачи");
+      toast.error(extractError(err, "Ошибка при удалении задачи"));
     }
   };
 
@@ -799,8 +816,35 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const removeMemberFromProject = async (projectId: number, userId: number) => {
-    await api.post(`/projects/list/${projectId}/members/remove/`, { user_id: userId });
-    await fetchAllData();
+    try {
+      await api.post(`/projects/list/${projectId}/members/remove/`, { user_id: userId });
+      await fetchAllData(true);
+    } catch (err: any) {
+      toast.error(extractError(err, 'Ошибка при исключении участника'));
+    }
+  };
+
+  // Права участника проекта (флажки). Доступно только менеджеру проекта.
+  const setMemberPermissions = async (
+    projectId: number,
+    userId: number,
+    permissions: Partial<Record<MemberPermissionKey, boolean>>,
+  ) => {
+    // Оптимистично переключаем флажок, при ошибке возвращаем как было
+    const previous = projects;
+    setProjects(prev => prev.map(p => p.id !== projectId ? p : {
+      ...p,
+      members: p.members.map(m => m.user.id !== userId ? m : {
+        ...m,
+        permissions: { ...(m.permissions as Record<MemberPermissionKey, boolean>), ...permissions },
+      }),
+    }));
+    try {
+      await api.post(`/projects/list/${projectId}/members/permissions/`, { user_id: userId, permissions });
+    } catch (err: any) {
+      setProjects(previous);
+      toast.error(extractError(err, 'Не удалось изменить права участника'));
+    }
   };
 
   const assignEmployeeToProject = async (
@@ -822,7 +866,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   const saveBlockAsTemplate = async (blockId: number, name?: string) => {
     try {
-      await api.post(`/planning/blocks/${blockId}/make-template/`, { name });
+      await api.post(`/projects/blocks/${blockId}/make-template/`, { name });
       await fetchAllData();
       toast.success("Пакет сохранен в библиотеку");
     } catch (err: any) {
@@ -932,7 +976,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       addSkillToEmployee, deleteEmployeeSkill,
       addCertificateToEmployee, deleteEmployeeCertificate,
       updateWorkflowTask, deleteWorkflowTask,
-      addMemberToProject, removeMemberFromProject, assignEmployeeToProject,
+      addMemberToProject, removeMemberFromProject, assignEmployeeToProject, setMemberPermissions,
       transferBlock, addUnavailabilityToEmployee, deleteEmployeeUnavailability,
       saveBlockAsTemplate,
       markNotificationRead, markAllRead, fetchAuditLogs,

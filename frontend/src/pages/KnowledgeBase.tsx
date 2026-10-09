@@ -3,26 +3,16 @@ import {
   BookOpen, Search, Plus, Tag, FileText, Download, Eye, X, 
   UploadCloud, FolderOpen, User, Calendar, Trash2, Edit2 
 } from 'lucide-react';
-import api from '../api/client';
+import api, { downloadFile, fetchAllPages } from '../api/client';
 import { useAppContext } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
 import { toast } from 'react-hot-toast';
 import { niceConfirm } from '../utils/confirm';
-
-interface KnowledgeMaterial {
-  id: number;
-  title: string;
-  description: string;
-  file: string | null;
-  text_instruction: string;
-  tags: string[];
-  project: number | null;
-  project_name: string | null;
-  created_by: number | null;
-  created_by_name: string | null;
-  created_at: string;
-  updated_at: string;
-}
+import { isStaff, projectPerms } from '../utils/roles';
+import {
+  MATERIAL_CATEGORIES, MATERIAL_CATEGORY_STYLE, formatFileSize, materialDownloadUrl,
+  type KnowledgeMaterial,
+} from '../utils/materials';
 
 export default function KnowledgeBase() {
   const { projects, extractError } = useAppContext();
@@ -32,7 +22,9 @@ export default function KnowledgeBase() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
-  
+  // 'all' — всё доступное, 'global' — общая база знаний, число — файлы конкретного проекта
+  const [scope, setScope] = useState<'all' | 'global' | number>('all');
+
   // Modal states
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingMaterial, setEditingMaterial] = useState<KnowledgeMaterial | null>(null);
@@ -46,17 +38,20 @@ export default function KnowledgeBase() {
     setDescription('');
     setTextInstruction('');
     setTags([]);
-    setProjectId('');
+    setCategory('DOC');
+    // Без прав на общую базу материал можно добавить только в свой проект
+    setProjectId(canAddGlobal ? (typeof scope === 'number' && uploadableProjects.some(p => p.id === scope) ? scope : '') : (uploadableProjects[0]?.id ?? ''));
     setSelectedFile(null);
     setIsAddModalOpen(true);
   };
 
-  const handleEditClick = (m: KnowledgeMaterial) => {
+  const handleEditClick= (m: KnowledgeMaterial) => {
     setEditingMaterial(m);
     setTitle(m.title);
     setDescription(m.description || '');
     setTextInstruction(m.text_instruction || '');
     setTags(m.tags || []);
+    setCategory(m.category || 'DOC');
     setProjectId(m.project || '');
     setSelectedFile(null);
     setIsAddModalOpen(true);
@@ -69,20 +64,19 @@ export default function KnowledgeBase() {
   const [tagInput, setTagInput] = useState('');
   const [tags, setTags] = useState<string[]>([]);
   const [projectId, setProjectId] = useState<number | ''>('');
+  const [category, setCategory] = useState('DOC');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
-  const isManager = user?.role === 'ADMIN' || user?.role === 'MANAGER';
+  // Общую базу знаний пополняют менеджеры и администраторы,
+  // файлы проекта — участники с правом «Файлы: правка»
+  const canAddGlobal = isStaff(user);
+  const uploadableProjects = projects.filter(p => projectPerms(p).can_edit_files);
+  const canAdd = canAddGlobal || uploadableProjects.length > 0;
 
   const fetchMaterials = async () => {
     setLoading(true);
     try {
-      const res = await api.get('/projects/knowledge-materials/');
-      // Django Rest Framework simple pagination or list
-      if (res.data.results) {
-        setMaterials(res.data.results);
-      } else {
-        setMaterials(res.data);
-      }
+      setMaterials(await fetchAllPages<KnowledgeMaterial>('/projects/knowledge-materials/'));
     } catch (err: any) {
       toast.error(extractError(err, 'Ошибка при загрузке базы знаний'));
     } finally {
@@ -128,6 +122,7 @@ export default function KnowledgeBase() {
       formData.append('description', description.trim());
       formData.append('text_instruction', textInstruction.trim());
       formData.append('tags', JSON.stringify(tags));
+      formData.append('category', category);
       if (projectId) {
         formData.append('project', projectId.toString());
       } else {
@@ -187,16 +182,30 @@ export default function KnowledgeBase() {
     new Set(materials.flatMap(m => m.tags || []))
   );
 
-  // Filter materials based on search query and selected tag
+  const handleDownload = async (m: KnowledgeMaterial) => {
+    try {
+      await downloadFile(materialDownloadUrl(m.id), m.file_name || m.title);
+    } catch {
+      toast.error('Не удалось скачать файл');
+    }
+  };
+
+  // Проекты, по которым пользователю доступны материалы
+  const projectsWithMaterials = projects.filter(p => materials.some(m => m.project === p.id));
+
+  // Filter materials based on search query, selected tag and scope
   const filteredMaterials = materials.filter(m => {
-    const matchSearch = m.title.toLowerCase().includes(search.toLowerCase()) || 
-                        m.description.toLowerCase().includes(search.toLowerCase()) ||
-                        (m.file && m.file.toLowerCase().includes(search.toLowerCase())) ||
-                        m.tags.some(t => t.toLowerCase().includes(search.toLowerCase()));
-    
-    const matchTag = selectedTag ? m.tags.includes(selectedTag) : true;
-    
-    return matchSearch && matchTag;
+    const q = search.toLowerCase();
+    const matchSearch = m.title.toLowerCase().includes(q) ||
+                        (m.description || '').toLowerCase().includes(q) ||
+                        (m.text_instruction || '').toLowerCase().includes(q) ||
+                        (m.file_name || '').toLowerCase().includes(q) ||
+                        (m.tags || []).some(t => t.toLowerCase().includes(q));
+
+    const matchTag = selectedTag ? (m.tags || []).includes(selectedTag) : true;
+    const matchScope = scope === 'all' ? true : scope === 'global' ? m.project === null : m.project === scope;
+
+    return matchSearch && matchTag && matchScope;
   });
 
   return (
@@ -207,9 +216,9 @@ export default function KnowledgeBase() {
           <h1 className="text-2xl font-bold text-slate-100 flex items-center gap-2.5">
             <BookOpen size={24} className="text-violet-400" /> База знаний
           </h1>
-          <p className="text-sm text-slate-400 mt-1">Единое общедоступное хранилище документов, инструкций и методологий</p>
+          <p className="text-sm text-slate-400 mt-1">Общая база знаний и файлы проектов, к которым у вас есть доступ</p>
         </div>
-        {isManager && (
+        {canAdd && (
           <button
             onClick={openAddModal}
             className="flex items-center gap-2 bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium px-4 py-2.5 rounded-lg transition-colors shadow-lg shadow-violet-600/25"
@@ -225,12 +234,26 @@ export default function KnowledgeBase() {
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
           <input
             type="text"
-            placeholder="Поиск по названию, описанию или тегам..."
+            placeholder="Поиск по названию, тексту, файлу или тегам..."
             value={search}
             onChange={e => setSearch(e.target.value)}
             className="w-full pl-10 pr-4 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500/30 transition-all"
           />
         </div>
+
+        <select
+          value={scope}
+          onChange={e => setScope(e.target.value === 'all' || e.target.value === 'global' ? e.target.value : Number(e.target.value))}
+          className="bg-slate-900 border border-slate-800 text-slate-200 text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:border-violet-500"
+        >
+          <option value="all">Все материалы</option>
+          <option value="global">Общая база знаний</option>
+          {projectsWithMaterials.length > 0 && (
+            <optgroup label="Файлы проектов">
+              {projectsWithMaterials.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </optgroup>
+          )}
+        </select>
         
         {/* Tags Quick Filters */}
         <div className="flex items-center gap-2 flex-wrap max-w-xl">
@@ -291,7 +314,7 @@ export default function KnowledgeBase() {
                     </p>
                   </div>
                 </div>
-                {(user?.role === 'ADMIN' || m.created_by === user?.id) && (
+                {m.can_edit && (
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 absolute top-4 right-4 transition-all">
                     <button 
                       onClick={() => handleEditClick(m)}
@@ -311,6 +334,9 @@ export default function KnowledgeBase() {
                 )}
               </div>
 
+              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase tracking-wider w-fit mb-2 ${MATERIAL_CATEGORY_STYLE[m.category] ?? MATERIAL_CATEGORY_STYLE.OTHER}`}>
+                {m.category_display}
+              </span>
               <p className="text-xs text-slate-400 leading-relaxed mb-4 line-clamp-3 flex-1">{m.description || 'Нет описания'}</p>
 
               {/* Tags list */}
@@ -357,16 +383,13 @@ export default function KnowledgeBase() {
                     </button>
                   )}
                   {m.file && (
-                    <a
-                      href={m.file}
-                      download
-                      target="_blank"
-                      rel="noopener noreferrer"
+                    <button
+                      onClick={() => handleDownload(m)}
                       className="flex items-center justify-center p-1.5 bg-violet-600 hover:bg-violet-500 text-white rounded-lg transition-colors border border-violet-500 shadow-sm"
-                      title="Скачать файл"
+                      title={`Скачать файл${m.file_size ? ` (${formatFileSize(m.file_size)})` : ''}`}
                     >
                       <Download size={13} />
-                    </a>
+                    </button>
                   )}
                 </div>
               </div>
@@ -410,16 +433,30 @@ export default function KnowledgeBase() {
                     placeholder="Опишите кратко, о чем этот документ"
                   />
                 </div>
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1.5">Связать с проектом (опционально)</label>
-                  <select
-                    value={projectId}
-                    onChange={e => setProjectId(e.target.value ? Number(e.target.value) : '')}
-                    className="w-full bg-slate-800 border border-slate-700 text-slate-200 text-sm rounded-xl px-4 py-2.5 focus:outline-none focus:border-violet-500"
-                  >
-                    <option value="">Без привязки к конкретному проекту</option>
-                    {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                  </select>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1.5">Размещение</label>
+                    <select
+                      value={projectId}
+                      onChange={e => setProjectId(e.target.value ? Number(e.target.value) : '')}
+                      className="w-full bg-slate-800 border border-slate-700 text-slate-200 text-sm rounded-xl px-4 py-2.5 focus:outline-none focus:border-violet-500"
+                    >
+                      {canAddGlobal && <option value="">Общая база знаний (видна всем)</option>}
+                      {uploadableProjects.map(p => <option key={p.id} value={p.id}>Проект: {p.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1.5">Тип материала</label>
+                    <select
+                      value={category}
+                      onChange={e => setCategory(e.target.value)}
+                      className="w-full bg-slate-800 border border-slate-700 text-slate-200 text-sm rounded-xl px-4 py-2.5 focus:outline-none focus:border-violet-500"
+                    >
+                      {Object.entries(MATERIAL_CATEGORIES).map(([value, label]) => (
+                        <option key={value} value={value}>{label}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
                 <div>
                   <label className="block text-xs text-slate-400 mb-1.5">Текстовая инструкция / Методика</label>
@@ -537,20 +574,19 @@ export default function KnowledgeBase() {
                       </div>
                       <div className="min-w-0">
                         <p className="text-xs font-semibold text-slate-200 truncate max-w-[300px]">
-                          {decodeURIComponent(previewMaterial.file.substring(previewMaterial.file.lastIndexOf('/') + 1))}
+                          {previewMaterial.file_name}
                         </p>
-                        <p className="text-[10px] text-slate-500 uppercase font-bold tracking-tight">Документ базы знаний</p>
+                        <p className="text-[10px] text-slate-500 uppercase font-bold tracking-tight">
+                          {previewMaterial.category_display} · {formatFileSize(previewMaterial.file_size)}
+                        </p>
                       </div>
                     </div>
-                    <a
-                      href={previewMaterial.file}
-                      download
-                      target="_blank"
-                      rel="noopener noreferrer"
+                    <button
+                      onClick={() => handleDownload(previewMaterial)}
                       className="flex items-center gap-1 px-3 py-2 bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold rounded-lg border border-violet-500 transition-colors shadow shadow-violet-650/30"
                     >
                       <Download size={12} /> Скачать файл
-                    </a>
+                    </button>
                   </div>
                   
                   {/* Embedded File Preview (Images only for now) */}

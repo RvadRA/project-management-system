@@ -6,6 +6,7 @@ import {
 import { useAppContext } from '../context/AppContext';
 import { toast } from 'react-hot-toast';
 import { niceConfirm } from '../utils/confirm';
+import { ALL_ROLES, ROLE_LABELS } from '../utils/roles';
 
 type TabType = 'skills' | 'risks' | 'roles' | 'domains' | 'calendars' | 'blocks' | 'audit' | 'users' | 'system';
 
@@ -291,6 +292,9 @@ export default function Settings() {
                     <div>
                       <h3 className="text-white font-semibold text-sm">{user.full_name}</h3>
                       <p className="text-[10px] text-slate-500">@{user.username}</p>
+                      <p className="text-[10px] font-bold text-violet-400 uppercase tracking-wider mt-0.5">
+                        {ROLE_LABELS[user.role ?? ''] ?? user.role}
+                      </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -609,9 +613,7 @@ export default function Settings() {
                       onChange={e => setFormData({...formData, role: e.target.value})}
                       className="w-full bg-slate-800 border border-slate-700 text-slate-200 text-sm rounded-xl px-4 py-2.5 focus:outline-none focus:border-violet-500"
                     >
-                      <option value="ADMIN">Admin</option>
-                      <option value="MANAGER">Manager</option>
-                      <option value="EMPLOYEE">Employee</option>
+                      {ALL_ROLES.map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
                     </select>
                   </div>
                 </>

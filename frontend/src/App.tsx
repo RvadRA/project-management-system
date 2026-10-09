@@ -22,6 +22,7 @@ import { AppProvider } from './context/AppContext';
 import { AuthProvider } from './context/AuthContext';
 import { useAuth } from './context/AuthContext';
 import { Toaster } from 'react-hot-toast';
+import { STAFF_ROLES } from './utils/roles';
 
 /** Block a route if user doesn't have the required role */
 function RoleRoute({
@@ -60,7 +61,7 @@ function AppRoutes() {
                 <Route
                   path="/workflows/editor"
                   element={
-                    <RoleRoute allowedRoles={['ADMIN', 'MANAGER']}>
+                    <RoleRoute allowedRoles={STAFF_ROLES}>
                       <WorkflowEditor />
                     </RoleRoute>
                   }
@@ -68,17 +69,17 @@ function AppRoutes() {
                 <Route
                   path="/workflows/editor/:id"
                   element={
-                    <RoleRoute allowedRoles={['ADMIN', 'MANAGER']}>
+                    <RoleRoute allowedRoles={STAFF_ROLES}>
                       <WorkflowEditor />
                     </RoleRoute>
                   }
                 />
 
-                {/* ADMIN + MANAGER only */}
+                {/* Администратор, руководитель проектов, менеджеры проектов */}
                 <Route
                   path="/team"
                   element={
-                    <RoleRoute allowedRoles={['ADMIN', 'MANAGER']}>
+                    <RoleRoute allowedRoles={STAFF_ROLES}>
                       <Team />
                     </RoleRoute>
                   }
@@ -86,7 +87,7 @@ function AppRoutes() {
                 <Route
                   path="/matching"
                   element={
-                    <RoleRoute allowedRoles={['ADMIN', 'MANAGER']}>
+                    <RoleRoute allowedRoles={STAFF_ROLES}>
                       <Matching />
                     </RoleRoute>
                   }
@@ -94,7 +95,7 @@ function AppRoutes() {
                 <Route
                   path="/analytics"
                   element={
-                    <RoleRoute allowedRoles={['ADMIN', 'MANAGER']}>
+                    <RoleRoute allowedRoles={STAFF_ROLES}>
                       <Analytics />
                     </RoleRoute>
                   }
@@ -110,7 +111,7 @@ function AppRoutes() {
                 <Route
                   path="/catalog"
                   element={
-                    <RoleRoute allowedRoles={['ADMIN', 'MANAGER']}>
+                    <RoleRoute allowedRoles={STAFF_ROLES}>
                       <PlanningCatalog />
                     </RoleRoute>
                   }
@@ -118,7 +119,7 @@ function AppRoutes() {
                 <Route
                   path="/calendar"
                   element={
-                    <RoleRoute allowedRoles={['ADMIN', 'MANAGER']}>
+                    <RoleRoute allowedRoles={STAFF_ROLES}>
                       <Calendar />
                     </RoleRoute>
                   }
@@ -126,7 +127,7 @@ function AppRoutes() {
                 <Route
                   path="/audit"
                   element={
-                    <RoleRoute allowedRoles={['ADMIN', 'MANAGER']}>
+                    <RoleRoute allowedRoles={STAFF_ROLES}>
                       <Audit />
                     </RoleRoute>
                   }

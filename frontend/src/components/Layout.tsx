@@ -3,35 +3,37 @@ import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, FolderKanban, Users, Zap,
   GitBranch, BarChart3, ClipboardCheck, LogOut, Shield, Briefcase, UserCheck, Settings, History,
-  ChevronLeft, ChevronRight, Package, CalendarDays, BookOpen, Sun, Moon
+  ChevronLeft, ChevronRight, Package, CalendarDays, BookOpen, Sun, Moon, Crown
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useAppContext } from '../context/AppContext';
 import { OnboardingTour } from './OnboardingTour';
 import { CommandPalette } from './CommandPalette';
 import { HelpCenter } from './HelpCenter';
+import { ALL_ROLES, STAFF_ROLES, ROLE_LABELS } from '../utils/roles';
 
 // Role-based nav items
 const ALL_NAV_ITEMS = [
-  { to: '/',          icon: LayoutDashboard, label: 'Дашборд',       roles: ['ADMIN', 'MANAGER', 'EMPLOYEE'] },
-  { to: '/workspace', icon: ClipboardCheck,  label: 'Мой кабинет',   roles: ['ADMIN', 'MANAGER', 'EMPLOYEE'] },
-  { to: '/projects',  icon: FolderKanban,    label: 'Проекты',        roles: ['ADMIN', 'MANAGER', 'EMPLOYEE'] },
-  { to: '/workflows', icon: GitBranch,       label: 'Процессы',       roles: ['ADMIN', 'MANAGER', 'EMPLOYEE'] },
-  { to: '/team',      icon: Users,           label: 'Команда',        roles: ['ADMIN', 'MANAGER'] },
-  { to: '/matching',  icon: Zap,             label: 'Подбор команды', roles: ['ADMIN', 'MANAGER'] },
-  { to: '/analytics', icon: BarChart3,       label: 'Аналитика',      roles: ['ADMIN', 'MANAGER'] },
-  { to: '/calendar',  icon: CalendarDays,    label: 'Календарь',      roles: ['ADMIN', 'MANAGER'] },
+  { to: '/',          icon: LayoutDashboard, label: 'Дашборд',       roles: ALL_ROLES },
+  { to: '/workspace', icon: ClipboardCheck,  label: 'Мой кабинет',   roles: ALL_ROLES },
+  { to: '/projects',  icon: FolderKanban,    label: 'Проекты',        roles: ALL_ROLES },
+  { to: '/workflows', icon: GitBranch,       label: 'Процессы',       roles: ALL_ROLES },
+  { to: '/team',      icon: Users,           label: 'Команда',        roles: STAFF_ROLES },
+  { to: '/matching',  icon: Zap,             label: 'Подбор команды', roles: STAFF_ROLES },
+  { to: '/analytics', icon: BarChart3,       label: 'Аналитика',      roles: STAFF_ROLES },
+  { to: '/calendar',  icon: CalendarDays,    label: 'Календарь',      roles: STAFF_ROLES },
 
-  { to: '/catalog',   icon: Package,         label: 'Библиотека WBS', roles: ['ADMIN', 'MANAGER'] },
-  { to: '/audit',     icon: History,         label: 'Журнал аудита',  roles: ['ADMIN', 'MANAGER'] },
+  { to: '/catalog',   icon: Package,         label: 'Библиотека WBS', roles: STAFF_ROLES },
+  { to: '/audit',     icon: History,         label: 'Журнал аудита',  roles: STAFF_ROLES },
   { to: '/settings',  icon: Settings,        label: 'Настройки',      roles: ['ADMIN'] },
-  { to: '/knowledge-base', icon: BookOpen,   label: 'База знаний',    roles: ['ADMIN', 'MANAGER', 'EMPLOYEE'] },
+  { to: '/knowledge-base', icon: BookOpen,   label: 'База знаний',    roles: ALL_ROLES },
 ];
 
 const ROLE_META: Record<string, { label: string; color: string; icon: typeof Shield }> = {
-  ADMIN:    { label: 'Администратор', color: 'text-violet-400', icon: Shield },
-  MANAGER:  { label: 'Менеджер',      color: 'text-blue-400',   icon: Briefcase },
-  EMPLOYEE: { label: 'Сотрудник',     color: 'text-emerald-400', icon: UserCheck },
+  ADMIN:           { label: ROLE_LABELS.ADMIN,           color: 'text-violet-400',  icon: Shield },
+  GENERAL_MANAGER: { label: ROLE_LABELS.GENERAL_MANAGER, color: 'text-amber-400',   icon: Crown },
+  MANAGER:         { label: ROLE_LABELS.MANAGER,         color: 'text-blue-400',    icon: Briefcase },
+  EMPLOYEE:        { label: ROLE_LABELS.EMPLOYEE,        color: 'text-emerald-400', icon: UserCheck },
 };
 
 export default function Layout({ children }: { children: React.ReactNode }) {
