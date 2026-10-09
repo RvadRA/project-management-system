@@ -6,8 +6,9 @@ import datetime
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, SAFE_METHODS, BasePermission
 
+from projects import access
 from .models import Skill, EmployeeProfile, EmployeeSkill, WorkloadEntry, EmployeeCertificate, EmployeeUnavailability
 from .serializers import (
     SkillSerializer,
@@ -20,17 +21,35 @@ from .serializers import (
 )
 
 
+class CanManageStaffOrReadOnly(BasePermission):
+    """Профили сотрудников и справочник навыков правят администратор и руководитель проектов."""
+    message = "Изменять данные сотрудников могут только администратор и руководитель проектов."
+
+    def has_permission(self, request, view):
+        if request.method in SAFE_METHODS:
+            return True
+        return access.can_manage_staff(request.user)
+
+
 class SkillViewSet(viewsets.ModelViewSet):
     queryset = Skill.objects.all().order_by('category', 'name')
     serializer_class = SkillSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanManageStaffOrReadOnly]
 
 
 class EmployeeProfileViewSet(viewsets.ModelViewSet):
     queryset = EmployeeProfile.objects.select_related('user').prefetch_related(
         'employee_skills__skill', 'workload_entries', 'participations__project', 'certificates'
     )
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanManageStaffOrReadOnly]
+
+    def get_queryset(self):
+        qs = super().get_queryset().order_by('id')
+        user = self.request.user
+        if access.can_view_staff(user):
+            return qs
+        # Исполнитель видит только собственный профиль (ставки и загрузка коллег скрыты)
+        return qs.filter(user=user)
 
     def get_serializer_class(self):
         if self.action in ('create', 'update', 'partial_update'):

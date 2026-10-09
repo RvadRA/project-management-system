@@ -22,11 +22,28 @@ class UserSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['date_joined']
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Роль и активность учётной записи меняет только администратор,
+        # иначе пользователь мог бы сам назначить себе ADMIN через PATCH /users/me/
+        from projects.access import is_admin
+        request = self.context.get('request')
+        actor = getattr(request, 'user', None)
+        if not (actor and is_admin(actor)):
+            for name in ('role', 'is_active', 'username'):
+                self.fields[name].read_only = True
+
     def get_full_name(self, obj):
         return obj.get_full_name() or obj.username
 
     def to_representation(self, instance):
         ret = super().to_representation(instance)
+        # Контакты и настройки уведомлений коллег видят только менеджеры и сам пользователь
+        from projects.access import can_view_staff
+        request = self.context.get('request')
+        actor = getattr(request, 'user', None)
+        if actor is not None and actor.is_authenticated and actor.id != instance.id and not can_view_staff(actor):
+            return {key: ret[key] for key in ('id', 'username', 'first_name', 'last_name', 'full_name', 'email')}
         # Manually fetch from profile
         profile = getattr(instance, 'profile', None)
         if profile:

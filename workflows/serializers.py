@@ -17,6 +17,20 @@ class WorkflowTaskTemplateSerializer(serializers.ModelSerializer):
         fields = '__all__'
         extra_kwargs = {'template': {'required': False}}
 
+    # frontend_id / depends_on_fids нужны только вложенному сохранению шаблона
+    # и не являются полями модели — при прямом CRUD их нужно отбросить
+    def create(self, validated_data):
+        validated_data.pop('frontend_id', None)
+        validated_data.pop('depends_on_fids', None)
+        if not validated_data.get('template'):
+            raise serializers.ValidationError({'template': 'Укажите шаблон процесса.'})
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        validated_data.pop('frontend_id', None)
+        validated_data.pop('depends_on_fids', None)
+        return super().update(instance, validated_data)
+
 
 class WorkflowTemplateSerializer(serializers.ModelSerializer):
     task_templates = WorkflowTaskTemplateSerializer(many=True, required=False)
@@ -28,19 +42,7 @@ class WorkflowTemplateSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         task_templates_data = validated_data.pop('task_templates', [])
         template = WorkflowTemplate.objects.create(**validated_data)
-        
-        # First pass: create all tasks
-        created_tasks = {}
-        for task_data in task_templates_data:
-            depends_on_ids = task_data.pop('depends_on', []) # We'll handle this later if needed
-            # For now, we assume frontend sends task_templates in a way we can create them.
-            # But wait, depends_on in the frontend might refer to our own temporary IDs.
-            
-            # Simplified: just create them for now. 
-            # We will improve this if we need complex dependencies.
-            pass
-            
-        # Re-implementing correctly:
+        # Задачи и зависимости между ними создаёт update()
         return self.update(template, {'task_templates': task_templates_data})
 
     def update(self, instance, validated_data):
@@ -121,12 +123,32 @@ class WorkflowTaskSerializer(serializers.ModelSerializer):
 
 
 class WorkflowInstanceSerializer(serializers.ModelSerializer):
-    tasks = WorkflowTaskSerializer(many=True, read_only=True)
+    tasks = serializers.SerializerMethodField()
     progress_percent = serializers.SerializerMethodField()
 
     class Meta:
         model = WorkflowInstance
         fields = '__all__'
+        read_only_fields = ['created_by', 'started_at', 'completed_at']
+
+    def get_tasks(self, obj):
+        tasks = obj.tasks.all()
+        request = self.context.get('request')
+        if request is not None and not self._sees_all_tasks(request.user, obj):
+            # Исполнитель видит в процессе только назначенные на него задачи
+            tasks = [t for t in tasks if t.assigned_to_id == request.user.id]
+        return WorkflowTaskSerializer(tasks, many=True, context=self.context).data
+
+    def _sees_all_tasks(self, user, obj):
+        from projects import access
+        if access.has_global_access(user):
+            return True
+        if obj.project_id is None:
+            return obj.created_by_id == user.id
+        cache = self.context.setdefault('_wf_task_scope', {})
+        if obj.project_id not in cache:
+            cache[obj.project_id] = access.has_project_perm(user, obj.project, 'can_view_all_tasks')
+        return cache[obj.project_id]
 
     def get_progress_percent(self, obj):
         tasks = obj.tasks.all()

@@ -130,6 +130,16 @@ class EmployeeCertificate(models.Model):
         verbose_name = 'Сертификат'
         verbose_name_plural = 'Сертификаты'
 
+    def __str__(self):
+        return self.name
+
+    @property
+    def is_expired(self):
+        # Поле используется CertificateSerializer; без него выдача профиля падала с 500
+        import datetime
+        return bool(self.expiry_date and self.expiry_date < datetime.date.today())
+
+
 class EmployeeUnavailability(models.Model):
     TYPES = [
         ('VACATION', 'Отпуск'),

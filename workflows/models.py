@@ -152,7 +152,10 @@ class WorkflowTask(models.Model):
         text = f"{self.name or ''} {self.description or ''}".lower()
         is_urgent = any(kw in text for kw in keywords)
         
-        if is_urgent:
+        # Срочность применяем один раз — когда задача становится срочной. Иначе каждый
+        # save() (смена статуса, правка описания) сдвигал бы дедлайн ещё на 2 часа
+        # и срочная задача никогда не становилась бы просроченной.
+        if is_urgent and (self._state.adding or self.priority != 'URGENT'):
             self.priority = 'URGENT'
             self.sla_hours = 2
             self.order = 0

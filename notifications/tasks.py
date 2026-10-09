@@ -88,8 +88,8 @@ def send_rich_task_notification(user_id, task_id, event_type, changer_name=None)
     progress_bar = format_progress_bar(progress)
     
     frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5175')
-    task_url = f"{frontend_url}/workflows/tasks/{task.id}"
-    
+    task_url = f"{frontend_url}/workspace"
+
     status_emojis = {'TODO': '📋', 'IN_PROGRESS': '⚡', 'REVIEW': '🔍', 'DONE': '✅', 'ESCALATED': '🚨'}
     emoji = status_emojis.get(task.status, '🔄')
     
@@ -115,11 +115,14 @@ def send_rich_task_notification(user_id, task_id, event_type, changer_name=None)
     
     # Save to database for in-app bell
     from .models import Notification
+    # Заголовок без HTML и ведущего эмодзи: «🔄 <b>Статус задачи изменен</b>» -> «Статус задачи изменен»
+    plain_title = header.replace('<b>', '').replace('</b>', '').split(' ', 1)[-1]
+    notif_types = {'ASSIGNED': 'TASK_ASSIGNED', 'ESCALATED': 'ESCALATION', 'APPROVED': 'SUCCESS'}
     Notification.objects.create(
         recipient=user,
-        title=header.replace('<b>', '').replace('</b>', '').split(' ')[1] if ' ' in header else header,
+        title=plain_title,
         body=f"Задача: {task.name}. Статус: {task.get_status_display()}",
-        type='TASK_ASSIGNED' if event_type == 'ASSIGNED' else 'INFO',
+        type=notif_types.get(event_type, 'INFO'),
         task_id=task.id,
         project_id=task.workflow.project.id if task.workflow.project else None
     )

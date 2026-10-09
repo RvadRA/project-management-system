@@ -36,10 +36,18 @@ class WorkflowService:
         if new_status == 'DONE':
             # Пример условия: нужна проверка менеджером
             if condition.get('type') == 'approval_required':
+                from projects import access
                 required_role = condition.get('role', 'MANAGER')
-                if user.role != required_role and user.role != 'ADMIN':
+                project = task.workflow.project
+                allowed = (
+                    access.has_global_access(user)
+                    or user.role == required_role
+                    # менеджер конкретного проекта тоже вправе утвердить задачу
+                    or (required_role == 'MANAGER' and project and access.is_project_manager(user, project))
+                )
+                if not allowed:
                     return False, f"Для завершения этой задачи требуется утверждение пользователем с ролью {required_role}"
-                    
+
         return True, ""
 
     @staticmethod
@@ -47,12 +55,26 @@ class WorkflowService:
         """
         Синхронизирует статус в WBS плане (если есть связь).
         """
-        if workflow_task.linked_wbs_task:
-            wbs_task = workflow_task.linked_wbs_task
-            # Only sync if the status actually changed to prevent loops
-            if wbs_task.status != workflow_task.status:
-                wbs_task.status = workflow_task.status
-                wbs_task.save(update_fields=['status'])
+        wbs_task = workflow_task.linked_wbs_task
+        if not wbs_task:
+            return
+        # К одной задаче плана привязан весь процесс (несколько WorkflowTask),
+        # поэтому статус WBS — агрегат, а не статус последней сохранённой задачи
+        statuses = set(wbs_task.execution_tasks.values_list('status', flat=True))
+        if not statuses:
+            return
+        if statuses == {'DONE'}:
+            new_status = 'DONE'
+        elif statuses == {'TODO'}:
+            new_status = 'TODO'
+        elif statuses <= {'DONE', 'REVIEW'}:
+            new_status = 'REVIEW'
+        else:
+            new_status = 'IN_PROGRESS'
+        # Only sync if the status actually changed to prevent loops
+        if wbs_task.status != new_status:
+            wbs_task.status = new_status
+            wbs_task.save(update_fields=['status'])
 
     @staticmethod
     def create_process_from_template(template, project, wbs_task=None, creator=None, existing_instance=None):
@@ -81,11 +103,26 @@ class WorkflowService:
         
         from projects.services import AssignmentService
         
+        task_templates = list(template.task_templates.all().order_by('order', 'id'))
+        # template_id -> [template_id предшественников]
+        predecessors = {t.id: list(t.depends_on.values_list('id', flat=True)) for t in task_templates}
+        if len(task_templates) > 1 and not any(predecessors.values()):
+            # Зависимости в шаблоне не заданы: задачи идут последовательно по order,
+            # а помеченные is_parallel выполняются параллельно с предыдущей
+            group_predecessors = []
+            current_group = []
+            for t_template in task_templates:
+                if current_group and not t_template.is_parallel:
+                    group_predecessors = current_group
+                    current_group = []
+                predecessors[t_template.id] = list(group_predecessors)
+                current_group.append(t_template.id)
+
         tasks_map = {} # template_id -> WorkflowTask
-        for t_template in template.task_templates.all().order_by('order'):
-            # Активируем задачи без зависимостей или с order=0
-            is_start = t_template.order == 0 or not t_template.depends_on.exists()
-            
+        for t_template in task_templates:
+            # Активируем задачи без предшественников
+            is_start = not predecessors[t_template.id]
+
             # Инициализируем чек-лист из шаблона
             initial_checklist = [{"text": item, "is_done": False} for item in t_template.checklist] if t_template.checklist else []
 
@@ -126,12 +163,10 @@ class WorkflowService:
             tasks_map[t_template.id] = wt
             
         # Устанавливаем зависимости
-        for t_template in template.task_templates.all():
-            wt = tasks_map.get(t_template.id)
-            if wt:
-                for dep_template in t_template.depends_on.all():
-                    dep_task = tasks_map.get(dep_template.id)
-                    if dep_task:
-                        wt.depends_on.add(dep_task)
-            
+        for t_template in task_templates:
+            wt = tasks_map[t_template.id]
+            dep_tasks = [tasks_map[dep_id] for dep_id in predecessors[t_template.id] if dep_id in tasks_map]
+            if dep_tasks:
+                wt.depends_on.add(*dep_tasks)
+
         return instance

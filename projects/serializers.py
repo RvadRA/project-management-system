@@ -5,27 +5,54 @@ from django.contrib.auth import get_user_model
 from .models import Project, ProjectMember, PlanningBlock, Task, TaskDependency, AuditLog, GlobalSetting, KnowledgeMaterial
 
 
+from accounts.serializers import UserNestedSerializer
+from plans.serializers import ProjectRoleSerializer, RiskSerializer, TaskRequiredRoleSerializer, WorkCalendarSerializer
+from workflows.serializers import WorkflowTemplateSerializer
+from . import access
+
+User = get_user_model()
+
+
 class GlobalSettingSerializer(serializers.ModelSerializer):
     class Meta:
         model = GlobalSetting
         fields = ['id', 'key', 'value', 'description', 'updated_at']
         read_only_fields = ['updated_at']
-from accounts.serializers import UserNestedSerializer
-from plans.serializers import ProjectRoleSerializer, RiskSerializer, TaskRequiredRoleSerializer, WorkCalendarSerializer
-from workflows.serializers import WorkflowTemplateSerializer
 
-User = get_user_model()
+
+def restricted_task_user(context, project):
+    """
+    Возвращает пользователя, если ему в этом проекте видны только собственные задачи,
+    иначе None (видны все). Результат кэшируется в контексте сериализатора.
+    """
+    request = context.get('request')
+    if request is None or project is None:
+        return None
+    cache = context.setdefault('_task_scope', {})
+    if project.id not in cache:
+        sees_all = access.has_project_perm(request.user, project, 'can_view_all_tasks')
+        cache[project.id] = None if sees_all else request.user
+    return cache[project.id]
 
 
 class ProjectMemberSerializer(serializers.ModelSerializer):
     user = UserNestedSerializer(read_only=True)
 
     role_info = ProjectRoleSerializer(source='role_ref', read_only=True)
+    is_manager = serializers.BooleanField(read_only=True)
+    permissions = serializers.SerializerMethodField()
 
     class Meta:
         model = ProjectMember
-        fields = ['id', 'user', 'role', 'role_ref', 'role_info', 'allocation_percentage', 'joined_at']
+        fields = [
+            'id', 'user', 'role', 'role_ref', 'role_info', 'allocation_percentage', 'joined_at',
+            'is_manager', 'permissions',
+        ]
         read_only_fields = ['joined_at']
+
+    def get_permissions(self, obj):
+        # У менеджера проекта все права включены независимо от флажков
+        return {key: bool(obj.is_manager or getattr(obj, key)) for key in access.PROJECT_PERMISSION_KEYS}
 
 
 class AuditLogSerializer(serializers.ModelSerializer):
@@ -47,6 +74,7 @@ class ProjectSerializer(serializers.ModelSerializer):
     progress_percentage = serializers.SerializerMethodField()
     calendar_info = WorkCalendarSerializer(source='calendar', read_only=True)
     risks_info = RiskSerializer(source='risks', many=True, read_only=True)
+    my_permissions = serializers.SerializerMethodField()
 
     class Meta:
         model = Project
@@ -54,9 +82,15 @@ class ProjectSerializer(serializers.ModelSerializer):
             'id', 'name', 'description', 'domain', 'start_date', 'end_date',
             'status', 'manager', 'manager_id', 'manager_allocation', 'members', 'budget',
             'calendar', 'calendar_info', 'risks', 'risks_info',
-            'progress_percentage', 'created_at', 'updated_at',
+            'progress_percentage', 'my_permissions', 'created_at', 'updated_at',
         ]
         read_only_fields = ['created_at', 'updated_at']
+
+    def get_my_permissions(self, obj):
+        request = self.context.get('request')
+        if request is None:
+            return None
+        return access.project_permissions_for(request.user, obj)
 
     def get_progress_percentage(self, obj):
         from workflows.models import WorkflowTask
@@ -104,7 +138,8 @@ class ProjectSerializer(serializers.ModelSerializer):
         elif p > 0 and obj.status == 'DRAFT':
             new_status = 'ACTIVE'
             
-        if new_status != obj.status and obj.status != 'ON_HOLD':
+        # Вручную поставленные «На паузе» и «Отменён» автоматикой не перезаписываем
+        if new_status != obj.status and obj.status not in ('ON_HOLD', 'CANCELLED'):
             obj.status = new_status
             obj.save(update_fields=['status'])
             
@@ -153,7 +188,11 @@ class TaskSerializer(serializers.ModelSerializer):
         ]
 
     def get_subtasks(self, obj):
-        return TaskSerializer(obj.subtasks.all(), many=True).data
+        subtasks = obj.subtasks.all()
+        only_user = restricted_task_user(self.context, obj.block.project)
+        if only_user is not None:
+            subtasks = subtasks.filter(assigned_to=only_user)
+        return TaskSerializer(subtasks, many=True, context=self.context).data
 
     def get_assignee_workload(self, obj):
         if obj.assigned_to:
@@ -179,12 +218,19 @@ class PlanningBlockSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
     def get_tasks(self, obj):
-        # Only return root tasks for the block
-        return TaskSerializer(obj.tasks.filter(parent__isnull=True), many=True).data
+        only_user = restricted_task_user(self.context, obj.project)
+        if only_user is not None:
+            # Исполнитель видит только свои задачи; вложенные показываем плоско,
+            # если родительская задача ему не назначена
+            tasks = obj.tasks.filter(assigned_to=only_user).exclude(parent__assigned_to=only_user)
+        else:
+            # Only return root tasks for the block
+            tasks = obj.tasks.filter(parent__isnull=True)
+        return TaskSerializer(tasks, many=True, context=self.context).data
 
     def get_children(self, obj):
         # Prevent deep recursion if needed, but for WBS it's fine
-        return PlanningBlockSerializer(obj.children.all(), many=True).data
+        return PlanningBlockSerializer(obj.children.all(), many=True, context=self.context).data
 
     def get_analytics(self, obj):
         if not obj.is_template:
@@ -242,10 +288,33 @@ class PlanningBlockSerializer(serializers.ModelSerializer):
 class KnowledgeMaterialSerializer(serializers.ModelSerializer):
     created_by_name = serializers.SerializerMethodField(read_only=True)
     project_name = serializers.SerializerMethodField(read_only=True)
+    category_display = serializers.CharField(source='get_category_display', read_only=True)
+    file_name = serializers.SerializerMethodField(read_only=True)
+    file_size = serializers.SerializerMethodField(read_only=True)
+    can_edit = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = KnowledgeMaterial
         fields = '__all__'
+        read_only_fields = ['created_by']
+
+    def get_file_name(self, obj):
+        import os
+        return os.path.basename(obj.file.name) if obj.file else None
+
+    def get_file_size(self, obj):
+        if not obj.file:
+            return None
+        try:
+            return obj.file.size
+        except (OSError, ValueError):
+            return None
+
+    def get_can_edit(self, obj):
+        request = self.context.get('request')
+        if request is None:
+            return False
+        return can_edit_material(request.user, obj)
 
     def get_created_by_name(self, obj):
         if obj.created_by:
@@ -256,3 +325,15 @@ class KnowledgeMaterialSerializer(serializers.ModelSerializer):
         if obj.project:
             return obj.project.name
         return None
+
+
+def can_edit_material(user, material):
+    """
+    Файл проекта меняют менеджеры проекта и участники с правом can_edit_files.
+    Материал общей базы знаний — администратор / руководитель проектов либо автор-менеджер.
+    """
+    if material.project_id:
+        return access.has_project_perm(user, material.project, 'can_edit_files')
+    if access.has_global_access(user):
+        return True
+    return access.can_manage_library(user) and material.created_by_id == user.id

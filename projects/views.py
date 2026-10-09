@@ -1,65 +1,130 @@
 import datetime
-from rest_framework import viewsets, status, serializers
-from rest_framework.exceptions import ValidationError
+import os
+from datetime import timedelta
+
+from django.contrib.auth import get_user_model
+from django.db.models import Avg, Count, Q
+from django.http import FileResponse
+from django.utils import timezone
+from rest_framework import viewsets, status
 from rest_framework.decorators import action
-from rest_framework.response import Response
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
-from django.db import models as django_models
+from rest_framework.response import Response
+
+from notifications.utils import notify
+from . import access
 from .models import Project, ProjectMember, PlanningBlock, Task, TaskDependency, AuditLog, GlobalSetting, KnowledgeMaterial
+from .permissions import (
+    IsAdminOrReadOnly, require, require_project_perm, require_project_manager,
+)
 from .serializers import (
     ProjectSerializer, ProjectMemberSerializer, PlanningBlockSerializer,
     TaskSerializer, TaskDependencySerializer, AuditLogSerializer, GlobalSettingSerializer,
-    KnowledgeMaterialSerializer,
+    KnowledgeMaterialSerializer, can_edit_material,
 )
 from .services import PlanningImportService
-from .permissions import IsProjectManagerOrAdmin
-from django.db.models import Avg, Count
-from django.utils import timezone
-from datetime import timedelta
-from notifications.utils import notify
 
+User = get_user_model()
 
-class GlobalSettingViewSet(viewsets.ModelViewSet):
-    queryset = GlobalSetting.objects.all()
-    serializer_class = GlobalSettingSerializer
-    permission_classes = [IsAuthenticated]
-
-    def perform_update(self, serializer):
-        if self.request.user.role != 'ADMIN':
-            raise ValidationError("Только администратор может менять системные настройки.")
-        serializer.save()
-
-    def perform_create(self, serializer):
-        if self.request.user.role != 'ADMIN':
-            raise ValidationError("Только администратор может создавать системные настройки.")
-        serializer.save()
-
-
-class KnowledgeMaterialViewSet(viewsets.ModelViewSet):
-    queryset = KnowledgeMaterial.objects.all()
-    serializer_class = KnowledgeMaterialSerializer
-    permission_classes = [IsAuthenticated]
-
-    def get_queryset(self):
-        return self.queryset.select_related('project', 'created_by')
-
-    def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
-
-    def perform_update(self, serializer):
-        obj = self.get_object()
-        if self.request.user.role != 'ADMIN' and obj.created_by != self.request.user:
-            raise serializers.ValidationError("У вас нет прав для изменения этого материала.")
-        serializer.save()
-
-    def perform_destroy(self, instance):
-        if self.request.user.role != 'ADMIN' and instance.created_by != self.request.user:
-            raise serializers.ValidationError("У вас нет прав для удаления этого материала.")
-        instance.delete()
+PM_ROLE_KEYWORDS = ('manager', 'менеджер', 'руководитель')
 
 
 def _log(project, user, action, detail=None):
     AuditLog.objects.create(project=project, user=user, action=action, detail=detail or {})
+
+
+def _is_pm_role_name(name):
+    name = (name or '').lower()
+    return any(kw in name for kw in PM_ROLE_KEYWORDS)
+
+
+def _parse_scaling_factor(data):
+    try:
+        factor = float(data.get('scaling_factor', 1.0))
+    except (TypeError, ValueError):
+        raise ValidationError({'scaling_factor': 'Коэффициент масштабирования должен быть числом.'})
+    if factor <= 0:
+        raise ValidationError({'scaling_factor': 'Коэффициент масштабирования должен быть больше 0.'})
+    return factor
+
+
+def _require_block_edit(user, block):
+    """Этапы проекта правят участники с can_edit_tasks, шаблоны — те, кто ведёт библиотеку."""
+    if block.project_id:
+        require_project_perm(user, block.project, 'can_edit_tasks')
+    else:
+        require(access.can_manage_library(user), "Изменять шаблоны могут только менеджеры и администраторы.")
+
+
+class GlobalSettingViewSet(viewsets.ModelViewSet):
+    queryset = GlobalSetting.objects.all().order_by('key')
+    serializer_class = GlobalSettingSerializer
+    permission_classes = [IsAuthenticated, IsAdminOrReadOnly]
+
+
+class KnowledgeMaterialViewSet(viewsets.ModelViewSet):
+    """
+    Файловое хранилище и база знаний.
+    project=NULL — общая база знаний, иначе — файлы проекта с проверкой прав участника.
+    """
+    queryset = KnowledgeMaterial.objects.select_related('project', 'created_by').all()
+    serializer_class = KnowledgeMaterialSerializer
+    permission_classes = [IsAuthenticated]
+    filterset_fields = ['project', 'category']
+    search_fields = ['title', 'description', 'text_instruction']
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        user = self.request.user
+        if self.request.query_params.get('scope') == 'global':
+            qs = qs.filter(project__isnull=True)
+        if access.has_global_access(user):
+            return qs
+        return qs.filter(
+            Q(project__isnull=True)
+            | Q(project_id__in=access.project_ids_with_perm(user, 'can_view_files'))
+        )
+
+    def _require_create_in(self, project):
+        user = self.request.user
+        if project is not None:
+            require_project_perm(user, project, 'can_edit_files', "У вас нет права загружать файлы в этот проект.")
+        else:
+            require(
+                access.can_manage_library(user),
+                "Добавлять материалы в общую базу знаний могут только менеджеры и администраторы.",
+            )
+
+    def perform_create(self, serializer):
+        self._require_create_in(serializer.validated_data.get('project'))
+        serializer.save(created_by=self.request.user)
+
+    def perform_update(self, serializer):
+        material = serializer.instance
+        require(can_edit_material(self.request.user, material), "У вас нет прав для изменения этого материала.")
+        # Перенос в другой проект требует права записи и там
+        if 'project' in serializer.validated_data and serializer.validated_data['project'] != material.project:
+            self._require_create_in(serializer.validated_data['project'])
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        require(can_edit_material(self.request.user, instance), "У вас нет прав для удаления этого материала.")
+        if instance.file:
+            instance.file.delete(save=False)
+        instance.delete()
+
+    @action(detail=True, methods=['get'])
+    def download(self, request, pk=None):
+        """Скачивание файла с проверкой прав (get_object уже ограничен get_queryset)."""
+        material = self.get_object()
+        if not material.file:
+            return Response({'error': 'К материалу не прикреплён файл.'}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            handle = material.file.open('rb')
+        except FileNotFoundError:
+            return Response({'error': 'Файл не найден в хранилище.'}, status=status.HTTP_404_NOT_FOUND)
+        return FileResponse(handle, as_attachment=True, filename=os.path.basename(material.file.name))
 
 
 class ProjectViewSet(viewsets.ModelViewSet):
@@ -67,109 +132,37 @@ class ProjectViewSet(viewsets.ModelViewSet):
     serializer_class = ProjectSerializer
     permission_classes = [IsAuthenticated]
 
-    def get_permissions(self):
-        if self.action in ('update', 'partial_update', 'destroy', 'add_member', 'remove_member', 'import_from_project'):
-            return [IsAuthenticated(), IsProjectManagerOrAdmin()]
-        return [IsAuthenticated()]
-
     def get_queryset(self):
-        user = self.request.user
-        qs = super().get_queryset()
-        if user.role in ('ADMIN', 'MANAGER'):
-            return qs
-        # EMPLOYEE: only projects they're a member of
-        member_project_ids = list(
-            user.project_memberships.values_list('project_id', flat=True)
+        return access.filter_visible_projects(super().get_queryset(), self.request.user)
+
+    # ── helpers ──────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _pm_role_ref():
+        from plans.models import ProjectRole
+        return (
+            ProjectRole.objects.filter(name__icontains='manager').first()
+            or ProjectRole.objects.filter(name__icontains='менеджер').first()
         )
-        return qs.filter(id__in=member_project_ids)
 
-    def perform_create(self, serializer):
-        user = self.request.user
-        if user.role == 'EMPLOYEE':
-            raise serializers.ValidationError("У сотрудника нет прав создавать проекты.")
-        project = serializer.save()
-        _log(project, user, 'PROJECT_CREATED', {'name': project.name})
-        
-        base_instructions = self.request.data.get('base_instructions')
-        if base_instructions:
-            KnowledgeMaterial.objects.create(
-                title=f"Базовая инструкция: {project.name}",
-                description=f"Базовые методические материалы для проекта {project.name}",
-                text_instruction=base_instructions,
-                tags=["базовая", "инструкция"],
-                project=project,
-                created_by=user
+    def _ensure_manager_member(self, project, user, allocation=None):
+        """Менеджер проекта всегда состоит в команде с ролью MANAGER."""
+        member = ProjectMember.objects.filter(project=project, user=user).first()
+        if member:
+            member.role = access.MEMBER_ROLE_MANAGER
+            if allocation is not None:
+                member.allocation_percentage = allocation
+            if member.role_ref is None:
+                member.role_ref = self._pm_role_ref()
+            member.save()
+        else:
+            member = ProjectMember.objects.create(
+                project=project, user=user, role=access.MEMBER_ROLE_MANAGER,
+                role_ref=self._pm_role_ref(),
+                allocation_percentage=allocation if allocation is not None else 100,
             )
-        
-        # If manager is assigned, add them to team as MANAGER with specified or default 100% allocation
-        if project.manager:
-            allocation = serializer.validated_data.get('manager_allocation', 100)
-            
-            # Try to find a global role for Project Manager to keep things in sync
-            from plans.models import ProjectRole
-            pm_role_ref = ProjectRole.objects.filter(name__icontains='manager').first()
-            if not pm_role_ref:
-                pm_role_ref = ProjectRole.objects.filter(name__icontains='менеджер').first()
-
-            ProjectMember.objects.get_or_create(
-                project=project, user=project.manager, 
-                defaults={'role': 'MANAGER', 'allocation_percentage': allocation, 'role_ref': pm_role_ref}
-            )
-            # Add workload entry for manager
-            self._sync_workload_entry(project, project.manager, allocation)
-            
-            # Notify manager
-            notify(
-                recipient=project.manager,
-                title='Вы назначены менеджером проекта',
-                body=f'Вы назначены ответственным за проект "{project.name}".',
-                notif_type='INFO',
-                project_id=project.id
-            )
-
-    def perform_update(self, serializer):
-        user = self.request.user
-        if user.role == 'EMPLOYEE':
-            raise serializers.ValidationError("У сотрудника нет прав редактировать проекты.")
-        
-        # Capture old manager to demote if changed
-        old_manager = None
-        if self.get_object().manager:
-            old_manager = self.get_object().manager
-
-        project = serializer.save()
-        _log(project, user, 'PROJECT_UPDATED', {'name': project.name})
-        
-        # If manager changed, notify new manager
-        if project.manager and project.manager != old_manager:
-            from notifications.tasks import send_notification_async
-            notify(
-                recipient=project.manager,
-                title='Вы назначены менеджером проекта',
-                body=f'Вы назначены новым ответственным за проект "{project.name}".',
-                notif_type='INFO',
-                project_id=project.id
-            )
-        
-        # Sync manager to team roles
-        if project.manager:
-            allocation = serializer.validated_data.get('manager_allocation', 100)
-            
-            # Try to find a global role for Project Manager
-            from plans.models import ProjectRole
-            pm_role_ref = ProjectRole.objects.filter(name__icontains='manager').first()
-            if not pm_role_ref:
-                pm_role_ref = ProjectRole.objects.filter(name__icontains='менеджер').first()
-
-            # Demote old manager if changed
-            if old_manager and old_manager != project.manager:
-                ProjectMember.objects.filter(project=project, user=old_manager, role='MANAGER').update(role='DEVELOPER')
-
-            ProjectMember.objects.update_or_create(
-                project=project, user=project.manager, 
-                defaults={'role': 'MANAGER', 'allocation_percentage': allocation, 'role_ref': pm_role_ref}
-            )
-            self._sync_workload_entry(project, project.manager, allocation)
+        self._sync_workload_entry(project, user, member.allocation_percentage)
+        return member
 
     def _sync_workload_entry(self, project, user, allocation):
         from matching.models import WorkloadEntry, EmployeeProfile
@@ -191,12 +184,82 @@ class ProjectViewSet(viewsets.ModelViewSet):
         except EmployeeProfile.DoesNotExist:
             pass
 
+    # ── CRUD ─────────────────────────────────────────────────────────────────
+
+    def perform_create(self, serializer):
+        user = self.request.user
+        require(access.can_create_projects(user), "У вас нет прав создавать проекты.")
+
+        extra = {}
+        # Менеджер без глобального доступа должен остаться менеджером созданного проекта,
+        # иначе он сразу потеряет к нему доступ
+        if not serializer.validated_data.get('manager') and not access.has_global_access(user):
+            extra['manager'] = user
+        project = serializer.save(**extra)
+        _log(project, user, 'PROJECT_CREATED', {'name': project.name})
+
+        base_instructions = self.request.data.get('base_instructions')
+        if base_instructions:
+            KnowledgeMaterial.objects.create(
+                title=f"Базовая инструкция: {project.name}",
+                description=f"Базовые методические материалы для проекта {project.name}",
+                text_instruction=base_instructions,
+                category='INSTRUCTION',
+                tags=["базовая", "инструкция"],
+                project=project,
+                created_by=user
+            )
+
+        if project.manager:
+            allocation = serializer.validated_data.get('manager_allocation', 100)
+            self._ensure_manager_member(project, project.manager, allocation)
+            if project.manager != user and not access.has_global_access(user):
+                # Создатель-менеджер, назначивший ответственным коллегу, остаётся со-менеджером
+                ProjectMember.objects.get_or_create(
+                    project=project, user=user,
+                    defaults={'role': access.MEMBER_ROLE_MANAGER, 'role_ref': self._pm_role_ref(), 'allocation_percentage': 0},
+                )
+            if project.manager != user:
+                notify(
+                    recipient=project.manager,
+                    title='Вы назначены менеджером проекта',
+                    body=f'Вы назначены ответственным за проект "{project.name}".',
+                    notif_type='INFO',
+                    project_id=project.id
+                )
+
+    def perform_update(self, serializer):
+        user = self.request.user
+        old_manager = serializer.instance.manager
+        require_project_manager(user, serializer.instance, "Редактировать проект может только его менеджер.")
+
+        project = serializer.save()
+        _log(project, user, 'PROJECT_UPDATED', {'name': project.name})
+
+        if project.manager and project.manager != old_manager:
+            notify(
+                recipient=project.manager,
+                title='Вы назначены менеджером проекта',
+                body=f'Вы назначены новым ответственным за проект "{project.name}".',
+                notif_type='INFO',
+                project_id=project.id
+            )
+            # Прежний ответственный остаётся в команде обычным участником
+            if old_manager:
+                ProjectMember.objects.filter(
+                    project=project, user=old_manager, role=access.MEMBER_ROLE_MANAGER
+                ).update(role='DEVELOPER')
+
+        if project.manager:
+            allocation = serializer.validated_data.get('manager_allocation')
+            self._ensure_manager_member(project, project.manager, allocation)
+
     def perform_destroy(self, instance):
         user = self.request.user
-        if user.role == 'EMPLOYEE':
-            raise serializers.ValidationError("У сотрудника нет прав удалять проекты.")
-        _log(instance, user, 'PROJECT_DELETED', {'name': instance.name})
+        require_project_manager(user, instance, "Удалить проект может только его менеджер.")
         instance.delete()
+
+    # ── Команда и права ──────────────────────────────────────────────────────
 
     @action(detail=True, methods=['get'], url_path='members')
     def members(self, request, pk=None):
@@ -208,118 +271,139 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='members/add')
     def add_member(self, request, pk=None):
-        if request.user.role == 'EMPLOYEE':
-            return Response({'error': 'У сотрудника нет прав.'}, status=status.HTTP_403_FORBIDDEN)
         project = self.get_object()
+        require_project_perm(request.user, project, 'can_manage_members', "У вас нет прав управлять командой проекта.")
+
         user_id = request.data.get('user_id')
-        role = request.data.get('role', 'OTHER')
+        if not user_id:
+            return Response({'error': 'user_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            target_user = User.objects.get(id=user_id)
+        except (User.DoesNotExist, ValueError, TypeError):
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        role = request.data.get('role') or 'DEVELOPER'
+        role_ref = None
         role_ref_id = request.data.get('role_ref_id')
-        # 0. Ищем существующего участника, чтобы сохранить его загрузку при смене роли
-        existing_member = ProjectMember.objects.filter(project=project, user_id=user_id).first()
-        
+        if role_ref_id:
+            from plans.models import ProjectRole
+            role_ref = ProjectRole.objects.filter(id=role_ref_id).first()
+
+        # Ищем существующего участника, чтобы сохранить его загрузку при смене роли
+        existing_member = ProjectMember.objects.filter(project=project, user=target_user).first()
+
         raw_allocation = request.data.get('allocation_percentage')
         if raw_allocation is not None and str(raw_allocation).strip() != "":
-            allocation = int(raw_allocation)
+            try:
+                allocation = int(raw_allocation)
+            except (TypeError, ValueError):
+                return Response({'error': 'Загрузка должна быть целым числом.'}, status=status.HTTP_400_BAD_REQUEST)
         elif existing_member:
             allocation = existing_member.allocation_percentage
         else:
             allocation = 100
-        
-        if allocation <= 0:
-            return Response({'error': 'Загрузка на проект должна быть больше 0%'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        if not user_id:
-            return Response({'error': 'user_id is required'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        from django.contrib.auth import get_user_model
-        User = get_user_model()
-        try:
-            target_user = User.objects.get(id=user_id)
-        except User.DoesNotExist:
-            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
 
-        role_ref = None
-        if role_ref_id:
-            from plans.models import ProjectRole
-            try:
-                role_ref = ProjectRole.objects.get(id=role_ref_id)
-            except ProjectRole.DoesNotExist:
-                pass
+        if not 0 < allocation <= 100:
+            return Response({'error': 'Загрузка на проект должна быть от 1 до 100%'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 1. Проверка на 1 менеджера в проекте
-        if role == 'MANAGER':
-            manager_exists = ProjectMember.objects.filter(
-                project=project, role='MANAGER'
-            ).exclude(user=target_user).exists()
-            if manager_exists:
-                return Response({'error': 'В проекте уже есть менеджер'}, status=status.HTTP_400_BAD_REQUEST)
+        # Роль «Project Manager» из справочника приравнивается к менеджеру проекта.
+        # Менеджеров в проекте может быть несколько.
+        is_pm_role = role == access.MEMBER_ROLE_MANAGER or (role_ref is not None and _is_pm_role_name(role_ref.name))
+        if is_pm_role:
+            role = access.MEMBER_ROLE_MANAGER
 
-        # 2. Проверка лимита загрузки (100%)
+        # Назначать и разжаловать менеджеров может только менеджер проекта
+        if is_pm_role or (existing_member and existing_member.is_manager):
+            require_project_manager(request.user, project, "Назначать менеджеров может только менеджер проекта.")
+
+        # Проверка лимита загрузки (100%)
         from matching.models import EmployeeProfile
-        try:
-            profile = EmployeeProfile.objects.get(user=target_user)
-            import datetime
-            from django.db.models import Sum
+        from django.db.models import Sum
+        profile = EmployeeProfile.objects.filter(user=target_user).first()
+        if profile:
             today = datetime.date.today()
-            # Загрузка в других активных проектах
             current_load = profile.workload_entries.filter(
                 start_date__lte=today, end_date__gte=today
             ).exclude(project=project).aggregate(total=Sum('load_percent'))['total'] or 0
-            
-            # existing_member уже определен выше
+
             if current_load + allocation > 100:
                 # Если это обновление и нагрузка не увеличилась, разрешаем смену роли/данных
-                if existing_member and allocation <= existing_member.allocation_percentage:
-                    pass
-                else:
+                if not (existing_member and allocation <= existing_member.allocation_percentage):
                     return Response({
                         'error': f'Превышение загрузки сотрудника (занято {current_load}%, требуется {allocation}%). Максимум 100%.'
                     }, status=status.HTTP_400_BAD_REQUEST)
-        except EmployeeProfile.DoesNotExist:
-            pass
-
-        # Determine if this is a Project Manager assignment (internal MANAGER role OR global 'Project Manager' role)
-        is_pm_role = (role == 'MANAGER') or (role_ref and 'manager' in role_ref.name.lower())
-
-        # 3. Проверка уникальности Project Manager
-        if is_pm_role:
-            existing_pm = ProjectMember.objects.filter(project=project, role='MANAGER').exclude(user=target_user).first()
-            if not existing_pm and role_ref:
-                # Check via role_ref too
-                from plans.models import ProjectRole as PR
-                pm_role_ids = PR.objects.filter(name__icontains='manager').values_list('id', flat=True)
-                existing_pm = ProjectMember.objects.filter(
-                    project=project, role_ref_id__in=pm_role_ids
-                ).exclude(user=target_user).first()
-            if existing_pm:
-                return Response({
-                    'error': f'В проекте уже есть Project Manager ({existing_pm.user.get_full_name() or existing_pm.user.username}). Выберите другую роль.'
-                }, status=status.HTTP_400_BAD_REQUEST)
 
         member, created = ProjectMember.objects.update_or_create(
-            project=project, user=target_user, 
+            project=project, user=target_user,
             defaults={'role': role, 'role_ref': role_ref, 'allocation_percentage': allocation}
         )
-        
-        # Если это роль менеджера и в проекте ещё нет главного менеджера — назначаем автоматически
+
         if is_pm_role and not project.manager:
             project.manager = target_user
             project.save(update_fields=['manager'])
-        
+        elif not is_pm_role and project.manager_id == target_user.id:
+            # Ответственного менеджера разжаловали — передаём ответственность другому менеджеру
+            self._reassign_primary_manager(project, exclude_user=target_user)
+
         self._sync_workload_entry(project, target_user, allocation)
-            
-        # Notify user about project assignment
+
         log_role = role_ref.name if role_ref else role
-        notify(
-            recipient=target_user,
-            title=f"Новый проект: {project.name}",
-            body=f"Вы были включены в команду проекта '{project.name}' в роли '{log_role}'.",
-            notif_type='INFO',
-            project_id=project.id
-        )
-            
-        _log(project, request.user, 'MEMBER_ADDED', {'user_id': user_id, 'role': log_role, 'role_ref': role_ref_id, 'allocation': allocation})
+        if created:
+            notify(
+                recipient=target_user,
+                title=f"Новый проект: {project.name}",
+                body=f"Вы были включены в команду проекта '{project.name}' в роли '{log_role}'.",
+                notif_type='INFO',
+                project_id=project.id
+            )
+
+        _log(project, request.user, 'MEMBER_ADDED' if created else 'MEMBER_UPDATED',
+             {'user_id': target_user.id, 'role': log_role, 'role_ref': role_ref_id, 'allocation': allocation})
         return Response(ProjectMemberSerializer(member).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='members/permissions')
+    def set_member_permissions(self, request, pk=None):
+        """
+        Настройка прав участника флажками.
+        Body: {"user_id": 5, "permissions": {"can_edit_tasks": true, "can_view_files": false}}
+        """
+        project = self.get_object()
+        require_project_manager(request.user, project, "Настраивать права участников может только менеджер проекта.")
+
+        member = ProjectMember.objects.filter(project=project, user_id=request.data.get('user_id')).first()
+        if not member:
+            return Response({'error': 'Участник не найден в проекте.'}, status=status.HTTP_404_NOT_FOUND)
+        if member.is_manager:
+            return Response(
+                {'error': 'У менеджера проекта все права включены. Чтобы ограничить его, смените роль.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        perms = request.data.get('permissions')
+        if not isinstance(perms, dict):
+            return Response({'error': 'permissions must be an object'}, status=status.HTTP_400_BAD_REQUEST)
+        unknown = set(perms) - set(access.PROJECT_PERMISSION_KEYS)
+        if unknown:
+            return Response({'error': f'Неизвестные права: {", ".join(sorted(unknown))}'}, status=status.HTTP_400_BAD_REQUEST)
+
+        changed = {}
+        for key, value in perms.items():
+            value = bool(value)
+            if getattr(member, key) != value:
+                setattr(member, key, value)
+                changed[key] = value
+        if changed:
+            member.save(update_fields=list(changed))
+            _log(project, request.user, 'MEMBER_PERMISSIONS_UPDATED', {'user_id': member.user_id, 'changed': changed})
+        return Response(ProjectMemberSerializer(member).data)
+
+    @staticmethod
+    def _reassign_primary_manager(project, exclude_user):
+        successor = ProjectMember.objects.filter(
+            project=project, role=access.MEMBER_ROLE_MANAGER
+        ).exclude(user=exclude_user).select_related('user').first()
+        project.manager = successor.user if successor else None
+        project.save(update_fields=['manager'])
 
     @action(detail=False, methods=['get'], url_path='metadata')
     def metadata(self, request):
@@ -328,48 +412,57 @@ class ProjectViewSet(viewsets.ModelViewSet):
             'statuses': dict(Project.STATUS_CHOICES),
             'roles': dict(ProjectMember.ROLE_CHOICES),
             'task_statuses': dict(Task.STATUS_CHOICES),
+            'user_roles': dict(User.ROLE_CHOICES),
+            'member_permissions': [{'key': key, 'label': label} for key, label in access.PROJECT_PERMISSIONS],
+            'material_categories': dict(KnowledgeMaterial.CATEGORY_CHOICES),
         })
 
     @action(detail=True, methods=['post'], url_path='members/remove')
     def remove_member(self, request, pk=None):
-        if request.user.role == 'EMPLOYEE':
-            return Response({'error': 'У сотрудника нет прав.'}, status=status.HTTP_403_FORBIDDEN)
         project = self.get_object()
+        require_project_perm(request.user, project, 'can_manage_members', "У вас нет прав управлять командой проекта.")
         user_id = request.data.get('user_id')
         if not user_id:
             return Response({'error': 'user_id is required'}, status=status.HTTP_400_BAD_REQUEST)
-        ProjectMember.objects.filter(project=project, user_id=user_id).delete()
-        
-        # Также удаляем запись о нагрузке, чтобы % сразу уменьшился
-        from matching.models import WorkloadEntry, EmployeeProfile
-        try:
-            profile = EmployeeProfile.objects.get(user_id=user_id)
-            WorkloadEntry.objects.filter(employee=profile, project=project).delete()
-        except EmployeeProfile.DoesNotExist:
-            pass
 
-        _log(project, request.user, 'MEMBER_REMOVED', {'user_id': user_id})
-        
-        # Notify user
-        from notifications.tasks import send_notification_async
-        send_notification_async.delay(
-            user_id=user_id,
+        member = ProjectMember.objects.filter(project=project, user_id=user_id).select_related('user').first()
+        if not member:
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        if member.is_manager:
+            require_project_manager(request.user, project, "Исключить менеджера может только менеджер проекта.")
+        target_user = member.user
+        member.delete()
+
+        if project.manager_id == target_user.id:
+            self._reassign_primary_manager(project, exclude_user=target_user)
+
+        # Также удаляем запись о нагрузке, чтобы % сразу уменьшился
+        from matching.models import WorkloadEntry
+        WorkloadEntry.objects.filter(employee__user=target_user, project=project).delete()
+
+        _log(project, request.user, 'MEMBER_REMOVED', {'user_id': target_user.id})
+        notify(
+            recipient=target_user,
             title='Исключение из проекта',
             body=f'Вы были исключены из команды проекта "{project.name}".',
-            channels=('email', 'telegram')
+            notif_type='INFO',
+            project_id=project.id,
         )
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    # ── Импорт / шаблоны ─────────────────────────────────────────────────────
 
     @action(detail=True, methods=['post'], url_path='import')
     def import_from_project(self, request, pk=None):
         """Clone this project into a new project."""
-        if request.user.role == 'EMPLOYEE':
-            return Response({'error': 'У сотрудника нет прав.'}, status=status.HTTP_403_FORBIDDEN)
         source = self.get_object()
+        require(access.can_create_projects(request.user), "У вас нет прав создавать проекты.")
+        require_project_manager(request.user, source, "Клонировать проект может только его менеджер.")
+
         new_name = request.data.get('name', f'{source.name} (копия)')
         copy_dates = request.data.get('copy_dates', False)
         copy_team = request.data.get('copy_team', True)
-        scaling_factor = float(request.data.get('scaling_factor', 1.0))
+        scaling_factor = _parse_scaling_factor(request.data)
 
         new_project = Project.objects.create(
             name=new_name,
@@ -384,40 +477,49 @@ class ProjectViewSet(viewsets.ModelViewSet):
         if copy_team:
             for m in source.members.select_related('user').all():
                 ProjectMember.objects.get_or_create(
-                    project=new_project, user=m.user, defaults={'role': m.role}
+                    project=new_project, user=m.user,
+                    defaults={
+                        'role': m.role, 'role_ref': m.role_ref,
+                        **{key: getattr(m, key) for key in access.PROJECT_PERMISSION_KEYS},
+                    }
                 )
+        self._ensure_manager_member(new_project, request.user)
+
         block_ids = request.data.get('block_ids', None)
         blocks_to_copy = source.blocks.filter(is_template=False).prefetch_related('tasks__outgoing_dependencies')
         if block_ids:
             blocks_to_copy = blocks_to_copy.filter(id__in=block_ids)
 
+        failed_blocks = []
         for block in blocks_to_copy:
             try:
                 PlanningImportService.import_block_to_project(
                     block, new_project, datetime.date.today(), scaling_factor
                 )
             except Exception:
-                pass
+                failed_blocks.append(block.name)
         _log(new_project, request.user, 'PROJECT_IMPORTED_FROM',
-             {'source_id': source.id, 'source_name': source.name})
-        return Response(ProjectSerializer(new_project).data, status=status.HTTP_201_CREATED)
+             {'source_id': source.id, 'source_name': source.name, 'failed_blocks': failed_blocks})
+        return Response(self.get_serializer(new_project).data, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=['post'], url_path='create-from-template')
     def create_from_template(self, request):
         """Create a new project using a template block as the initial WBS."""
-        if request.user.role == 'EMPLOYEE':
-            return Response({'error': 'У сотрудника нет прав.'}, status=status.HTTP_403_FORBIDDEN)
-        
+        require(access.can_create_projects(request.user), "У вас нет прав создавать проекты.")
+
         template_id = request.data.get('template_id')
         new_name = request.data.get('name')
         if not template_id or not new_name:
             return Response({'error': 'template_id and name are required'}, status=400)
-            
+
         try:
             template_block = PlanningBlock.objects.get(id=template_id, is_template=True)
         except PlanningBlock.DoesNotExist:
             return Response({'error': 'Template block not found'}, status=404)
-            
+
+        scaling_factor = _parse_scaling_factor(request.data)
+        task_ids = request.data.get('task_ids', None)
+
         new_project = Project.objects.create(
             name=new_name,
             description=f'Создано из шаблона «{template_block.name}»',
@@ -426,53 +528,69 @@ class ProjectViewSet(viewsets.ModelViewSet):
             start_date=datetime.date.today(),
             manager=request.user,
         )
-        
-        scaling_factor = float(request.data.get('scaling_factor', 1.0))
-        task_ids = request.data.get('task_ids', None)
-        
+        self._ensure_manager_member(new_project, request.user)
+
         PlanningImportService.import_template_to_project(
             template_block, new_project, datetime.date.today(), scaling_factor, task_ids=task_ids
         )
-        
+
         _log(new_project, request.user, 'PROJECT_CREATED', {'name': new_name, 'template': template_block.name})
-        return Response(ProjectSerializer(new_project).data, status=status.HTTP_201_CREATED)
+        return Response(self.get_serializer(new_project).data, status=status.HTTP_201_CREATED)
 
 
 class PlanningBlockViewSet(viewsets.ModelViewSet):
     queryset = PlanningBlock.objects.prefetch_related(
-        'tasks__required_roles__role', 
-        'tasks__incoming_dependencies', 
+        'tasks__required_roles__role',
+        'tasks__incoming_dependencies',
         'tasks__outgoing_dependencies',
         'typical_risks',
         'calendar'
-    ).all()
+    ).all().order_by('id')
     serializer_class = PlanningBlockSerializer
     permission_classes = [IsAuthenticated]
 
-    def get_permissions(self):
-        if self.action in ('create', 'update', 'partial_update', 'destroy'):
-            from projects.permissions import IsProjectManagerOrAdmin
-            return [IsAuthenticated(), IsProjectManagerOrAdmin()]
-        return [IsAuthenticated()]
+    def get_queryset(self):
+        qs = super().get_queryset()
+        user = self.request.user
+        if access.has_global_access(user):
+            return qs
+        visible = Q(project_id__in=access.visible_project_ids(user))
+        if access.can_manage_library(user):
+            visible |= Q(project__isnull=True)
+        return qs.filter(visible)
 
     def perform_create(self, serializer):
+        user = self.request.user
+        project = serializer.validated_data.get('project')
+        parent = serializer.validated_data.get('parent')
+        if project is None and parent is not None:
+            project = parent.project
+        if project is not None:
+            require_project_perm(user, project, 'can_edit_tasks', "У вас нет прав изменять план этого проекта.")
+        else:
+            require(access.can_manage_library(user), "Создавать шаблоны могут только менеджеры и администраторы.")
+
         template_id = self.request.data.get('template_id')
-        if template_id:
+        if template_id and project is not None:
             try:
                 template_block = PlanningBlock.objects.get(id=template_id, is_template=True)
-                project_id = self.request.data.get('project')
-                project = Project.objects.get(id=project_id)
-                start_date = project.start_date or datetime.date.today()
-                
-                new_block = PlanningImportService.clone_block_recursive(
-                    template_block, project, start_date
-                )
-                # We return the new block, but serializer needs to know
-                serializer.instance = new_block
-            except (PlanningBlock.DoesNotExist, Project.DoesNotExist):
-                serializer.save()
+            except (PlanningBlock.DoesNotExist, ValueError, TypeError):
+                raise ValidationError({'template_id': 'Шаблон не найден.'})
+            start_date = project.start_date or datetime.date.today()
+            # We return the new block, but serializer needs to know
+            serializer.instance = PlanningImportService.clone_block_recursive(
+                template_block, project, start_date, parent=parent
+            )
         else:
             serializer.save()
+
+    def perform_update(self, serializer):
+        _require_block_edit(self.request.user, serializer.instance)
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        _require_block_edit(self.request.user, instance)
+        instance.delete()
 
     @action(detail=False, methods=['get'], url_path='by-project')
     def by_project(self, request):
@@ -480,9 +598,12 @@ class PlanningBlockViewSet(viewsets.ModelViewSet):
         project_id = request.query_params.get('project_id')
         if not project_id:
             return Response({'error': 'project_id is required'}, status=400)
+        project = access.filter_visible_projects(Project.objects.all(), request.user).filter(id=project_id).first()
+        if not project:
+            return Response({'error': 'Проект не найден или недоступен.'}, status=status.HTTP_404_NOT_FOUND)
         # Only fetch ROOT blocks (parent is None) to start the tree
         blocks = PlanningBlock.objects.filter(
-            project_id=project_id, is_template=False, parent__isnull=True
+            project=project, is_template=False, parent__isnull=True
         ).prefetch_related('tasks__incoming_dependencies', 'tasks__outgoing_dependencies', 'children')
         serializer = self.get_serializer(blocks, many=True)
         return Response(serializer.data)
@@ -497,10 +618,17 @@ class PlanningBlockViewSet(viewsets.ModelViewSet):
         try:
             project = Project.objects.get(id=project_id)
             start_date = datetime.date.fromisoformat(start_date_str)
-        except (Project.DoesNotExist, ValueError):
+        except (Project.DoesNotExist, ValueError, TypeError):
             return Response({'error': 'Invalid project_id or start_date'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        scaling_factor = float(request.data.get('scaling_factor', 1.0))
+
+        require_project_perm(request.user, project, 'can_edit_tasks', "У вас нет прав изменять план целевого проекта.")
+        if source_block.project_id:
+            require_project_perm(
+                request.user, source_block.project, 'can_view_all_tasks',
+                "У вас нет прав копировать план исходного проекта.",
+            )
+
+        scaling_factor = _parse_scaling_factor(request.data)
         task_ids = request.data.get('task_ids', None)
 
         try:
@@ -512,20 +640,22 @@ class PlanningBlockViewSet(viewsets.ModelViewSet):
                 new_block = PlanningImportService.import_block_to_project(
                     source_block, project, start_date, scaling_factor, task_ids=task_ids
                 )
-            
-            _log(project, request.user, 'PLANNING_TRANSFERRED', {'block': source_block.name, 'from_template': source_block.is_template})
-            return Response(PlanningBlockSerializer(new_block).data, status=status.HTTP_201_CREATED)
-        except Exception as e:
+        except ValueError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        _log(project, request.user, 'PLANNING_TRANSFERRED', {'block': source_block.name, 'from_template': source_block.is_template})
+        return Response(self.get_serializer(new_block).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['post'], url_path='make-template')
     def make_template(self, request, pk=None):
         block = self.get_object()
+        require(access.can_manage_library(request.user), "Сохранять шаблоны могут только менеджеры и администраторы.")
         if block.is_template:
             return Response({'error': 'Блок уже является шаблоном.'}, status=400)
-        
-        template_name = request.data.get('name', f"Шаблон: {block.name}")
-        
+        require_project_perm(request.user, block.project, 'can_view_all_tasks')
+
+        template_name = request.data.get('name') or f"Шаблон: {block.name}"
+
         # Manually cloning here to avoid service edit issues for now
         new_template = PlanningBlock.objects.create(
             name=template_name,
@@ -565,22 +695,20 @@ class PlanningBlockViewSet(viewsets.ModelViewSet):
 
         for t_task in block.tasks.all():
             for dep in t_task.outgoing_dependencies.all():
-                if dep.to_task.id in old_to_new_task_map:
+                if dep.to_task_id in old_to_new_task_map:
                     TaskDependency.objects.create(
                         from_task=old_to_new_task_map[t_task.id],
-                        to_task=old_to_new_task_map[dep.to_task.id],
+                        to_task=old_to_new_task_map[dep.to_task_id],
                         type=dep.type,
                     )
-        
-        return Response(PlanningBlockSerializer(new_template).data, status=status.HTTP_201_CREATED)
+
+        return Response(self.get_serializer(new_template).data, status=status.HTTP_201_CREATED)
 
 
 class ImportPlanningView(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
 
     def create(self, request):
-        if request.user.role == 'EMPLOYEE':
-            return Response({'error': 'У сотрудника нет прав.'}, status=status.HTTP_403_FORBIDDEN)
         block_id = request.data.get('block_id')
         project_id = request.data.get('project_id')
         start_date_str = request.data.get('start_date')
@@ -590,12 +718,16 @@ class ImportPlanningView(viewsets.ViewSet):
             block = PlanningBlock.objects.get(id=block_id, is_template=True)
             project = Project.objects.get(id=project_id)
             start_date = datetime.date.fromisoformat(start_date_str)
-        except (PlanningBlock.DoesNotExist, Project.DoesNotExist, ValueError) as e:
+        except (PlanningBlock.DoesNotExist, Project.DoesNotExist, ValueError, TypeError) as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-        scaling_factor = float(request.data.get('scaling_factor', 1.0))
+        require_project_perm(request.user, project, 'can_edit_tasks', "У вас нет прав изменять план этого проекта.")
+        scaling_factor = _parse_scaling_factor(request.data)
         new_block = PlanningImportService.import_template_to_project(block, project, start_date, scaling_factor)
         _log(project, request.user, 'PLANNING_IMPORTED', {'block': block.name})
-        return Response(PlanningBlockSerializer(new_block).data, status=status.HTTP_201_CREATED)
+        return Response(
+            PlanningBlockSerializer(new_block, context={'request': request}).data,
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
@@ -604,63 +736,113 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
     filterset_fields = ['project']
 
+    def get_queryset(self):
+        qs = super().get_queryset()
+        user = self.request.user
+        if access.has_global_access(user):
+            return qs
+        # Журнал проекта доступен только его менеджерам
+        return qs.filter(project_id__in=access.managed_project_ids(user))
+
 
 class TaskViewSet(viewsets.ModelViewSet):
-    queryset = Task.objects.all()
+    queryset = Task.objects.all().order_by('block_id', 'order', 'id')
     serializer_class = TaskSerializer
     permission_classes = [IsAuthenticated]
-
-    def get_permissions(self):
-        if self.action in ('create', 'update', 'partial_update', 'destroy', 'recalculate', 'shift', 'suggest_assignee'):
-            return [IsAuthenticated(), IsProjectManagerOrAdmin()]
-        return [IsAuthenticated()]
 
     def get_queryset(self):
         qs = super().get_queryset().select_related('assigned_to', 'block__project', 'parent', 'workflow_task')
         project_id = self.request.query_params.get('project_id')
         if project_id:
             qs = qs.filter(block__project_id=project_id)
-        return qs
+        user = self.request.user
+        if access.has_global_access(user):
+            return qs
+        visible = (
+            Q(block__project_id__in=access.project_ids_with_perm(user, 'can_view_all_tasks'))
+            | Q(assigned_to=user, block__project_id__in=access.visible_project_ids(user))
+        )
+        if access.can_manage_library(user):
+            visible |= Q(block__project__isnull=True)
+        return qs.filter(visible)
+
+    def _require_edit(self, task):
+        _require_block_edit(self.request.user, task.block)
+
+    def _require_assign(self, project):
+        require_project_perm(
+            self.request.user, project, 'can_assign_tasks', "У вас нет права назначать исполнителей в этом проекте."
+        )
 
     def perform_create(self, serializer):
-        # Inherit process_template from block if not provided
-        block_id = self.request.data.get('block')
-        p_template = self.request.data.get('process_template')
-        
-        if block_id and not p_template:
-            try:
-                block = PlanningBlock.objects.get(id=block_id)
-                if block.process_template:
-                    serializer.validated_data['process_template'] = block.process_template
-            except PlanningBlock.DoesNotExist:
-                pass
+        user = self.request.user
+        block = serializer.validated_data['block']
+        _require_block_edit(user, block)
+        if serializer.validated_data.get('assigned_to') and block.project_id:
+            self._require_assign(block.project)
 
-        task = serializer.save()
+        # Inherit process_template from block if not provided
+        extra = {}
+        if not serializer.validated_data.get('process_template') and block.process_template:
+            extra['process_template'] = block.process_template
+
+        task = serializer.save(**extra)
+        project = block.project
+        if project is None:
+            return
+
         create_workflow = self.request.data.get('create_workflow', False)
-        
         if create_workflow and task.process_template:
             from workflows.services import WorkflowService
             WorkflowService.create_process_from_template(
-                task.process_template, 
-                task.block.project, 
+                task.process_template,
+                project,
                 wbs_task=task,
-                creator=self.request.user
+                creator=user
             )
-            _log(task.block.project, self.request.user, 'PLANNING_TASK_WORKFLOW_CREATED', {'task_id': task.id})
+            _log(project, user, 'PLANNING_TASK_WORKFLOW_CREATED', {'task_id': task.id})
 
         # Set default dates if not provided
         if not task.start_date:
-            task.start_date = task.block.project.start_date or timezone.now().date()
+            task.start_date = project.start_date or timezone.now().date()
             if not task.end_date:
                 task.end_date = task.start_date + timedelta(days=task.duration_days or 1)
             task.save(update_fields=['start_date', 'end_date'])
 
+    def perform_update(self, serializer):
+        user = self.request.user
+        task = serializer.instance
+        project = task.block.project
+        can_edit = (
+            access.has_project_perm(user, project, 'can_edit_tasks') if project
+            else access.can_manage_library(user)
+        )
+        changed = set(serializer.validated_data)
+        if not can_edit:
+            # Исполнитель может менять только статус собственной задачи
+            require(task.assigned_to_id == user.id, "Вы не можете редактировать чужие задачи.")
+            require(changed <= {'status'}, "Исполнитель может изменять только статус своей задачи.")
+        if 'assigned_to' in changed and serializer.validated_data['assigned_to'] != task.assigned_to and project:
+            self._require_assign(project)
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        self._require_edit(instance)
+        instance.delete()
+
     @action(detail=True, methods=['get'])
     def suggest_assignee(self, request, pk=None):
         task = self.get_object()
-        project_members = task.block.project.members.select_related('user').all()
-        
-            # 1. Project Team search
+        project = task.block.project
+        if project is None:
+            return Response([])
+        self._require_assign(project)
+        project_members = project.members.select_related('user', 'role_ref').all()
+        required_role_names = [rr.role.name for rr in task.required_roles.select_related('role')]
+
+        from matching.models import EmployeeProfile
+
+        # 1. Project Team search
         suggestions = []
         member_user_ids = set()
         for member in project_members:
@@ -668,18 +850,17 @@ class TaskViewSet(viewsets.ModelViewSet):
             score = 0
             breakdown = {'role_match': 0, 'workload': 0, 'experience': 0, 'availability': 0}
             reasons = []
-            
+
             # Role match
-            required_role_names = [rr.role.name for rr in task.required_roles.all()]
-            if member.role in required_role_names:
+            member_role_names = {member.role, member.role_ref.name if member.role_ref else None}
+            if member_role_names & set(required_role_names):
                 breakdown['role_match'] = 50
                 score += 50
-                reasons.append(f"Role match: {member.role}")
-            
+                reasons.append(f"Role match: {member.role_ref.name if member.role_ref else member.role}")
+
             # Workload check
-            from matching.models import EmployeeProfile
-            try:
-                profile = EmployeeProfile.objects.get(user=member.user)
+            profile = EmployeeProfile.objects.filter(user=member.user).first()
+            if profile:
                 load = profile.current_workload_percentage
                 if load < 70:
                     breakdown['workload'] = 30
@@ -693,14 +874,12 @@ class TaskViewSet(viewsets.ModelViewSet):
                     breakdown['workload'] = 10
                     score += 10
                     reasons.append(f"Stable workload: {load}%")
-            except EmployeeProfile.DoesNotExist:
-                pass
-            
+
             if score > 0 or not required_role_names:
                 if not required_role_names:
                     breakdown['availability'] = 20
-                    score += 20 
-                
+                    score += 20
+
                 suggestions.append({
                     'user_id': member.user.id,
                     'full_name': member.user.get_full_name() or member.user.username,
@@ -712,15 +891,13 @@ class TaskViewSet(viewsets.ModelViewSet):
 
         # 2. Global search if project team is small or no matches
         if len(suggestions) < 3:
-            from matching.models import EmployeeProfile
             external_candidates = EmployeeProfile.objects.exclude(user_id__in=member_user_ids).select_related('user')
-            required_role_names = [rr.role.name for rr in task.required_roles.all()]
-            
+
             for profile in external_candidates[:10]:
                 score = 0
                 breakdown = {'role_match': 0, 'workload': 0, 'experience': 40, 'availability': 0}
                 reasons = []
-                
+
                 # Simple role heuristic: position contains role name
                 for role_name in required_role_names:
                     if role_name.lower() in profile.position.lower():
@@ -728,13 +905,13 @@ class TaskViewSet(viewsets.ModelViewSet):
                         score += 40
                         reasons.append(f"Global role match: {profile.position}")
                         break
-                
+
                 load = profile.current_workload_percentage
                 if load < 50:
                     breakdown['availability'] = 30
                     score += 30
                     reasons.append(f"Global availability: {load}% load")
-                
+
                 if score > 10:
                     suggestions.append({
                         'user_id': profile.user.id,
@@ -744,93 +921,138 @@ class TaskViewSet(viewsets.ModelViewSet):
                         'reasons': reasons,
                         'is_external': True
                     })
-        
+
         suggestions.sort(key=lambda x: x['score'], reverse=True)
         return Response(suggestions)
 
     @action(detail=True, methods=['post'])
     def assign_user(self, request, pk=None):
         task = self.get_object()
-        user_id = request.data.get('user_id')
-        allow_auto_add = request.data.get('allow_auto_add', False)
+        project = task.block.project
+        if project is None:
+            return Response({'error': 'Нельзя назначить исполнителя на задачу шаблона.'}, status=400)
+        self._require_assign(project)
 
+        user_id = request.data.get('user_id')
+        allow_auto_add = bool(request.data.get('allow_auto_add', False))
         if not user_id:
             return Response({'error': 'user_id is required'}, status=400)
-            
-        from django.contrib.auth import get_user_model
-        User = get_user_model()
         try:
             user = User.objects.get(id=user_id)
-            from .services import AssignmentService
-            
-            role = request.data.get('role', 'DEVELOPER')
-            role_ref_id = request.data.get('role_ref_id')
-            
-            allocation = request.data.get('allocation_percentage')
-            
-            try:
-                AssignmentService.assign_user(
-                    task, user, 
-                    allow_auto_add=allow_auto_add, 
-                    role=role, 
-                    role_ref_id=role_ref_id,
-                    allocation_percentage=allocation
-                )
-                
-                # If linked to WorkflowTask, update that too
-                if hasattr(task, 'workflow_task') and task.workflow_task:
-                    task.workflow_task.assigned_to = user
-                    task.workflow_task.save(update_fields=['assigned_to'])
-                    
-                return Response({'status': 'assigned', 'user': user.get_full_name()})
-            except ValidationError as e:
-                return Response({'error': str(e.detail[0]) if isinstance(e.detail, list) else str(e.detail)}, status=400)
-
-        except User.DoesNotExist:
+        except (User.DoesNotExist, ValueError, TypeError):
             return Response({'error': 'User not found'}, status=404)
+
+        role = request.data.get('role') or 'DEVELOPER'
+        role_ref_id = request.data.get('role_ref_id')
+        allocation = request.data.get('allocation_percentage')
+
+        is_member = ProjectMember.objects.filter(project=project, user=user).exists()
+        if allow_auto_add and not is_member:
+            # Автодобавление в команду — это уже управление составом проекта
+            require_project_perm(request.user, project, 'can_manage_members', "У вас нет прав добавлять участников в проект.")
+            if role == access.MEMBER_ROLE_MANAGER:
+                require_project_manager(request.user, project, "Назначать менеджеров может только менеджер проекта.")
+
+        from .services import AssignmentService
+        try:
+            AssignmentService.assign_user(
+                task, user,
+                allow_auto_add=allow_auto_add,
+                role=role,
+                role_ref_id=role_ref_id,
+                allocation_percentage=allocation
+            )
+        except ValidationError as e:
+            return Response({'error': str(e.detail[0]) if isinstance(e.detail, list) else str(e.detail)}, status=400)
+
+        # If linked to WorkflowTask, update that too
+        if task.workflow_task:
+            task.workflow_task.assigned_to = user
+            task.workflow_task.save(update_fields=['assigned_to'])
+
+        return Response({'status': 'assigned', 'user': user.get_full_name() or user.username})
 
     @action(detail=True, methods=['post'])
     def simulate(self, request, pk=None):
         """Pre-calculate schedule changes without saving."""
         task = self.get_object()
-        days = int(request.data.get('days', 0))
-        
+        try:
+            days = int(request.data.get('days', 0))
+        except (TypeError, ValueError):
+            return Response({'error': 'days must be an integer'}, status=status.HTTP_400_BAD_REQUEST)
+
         # Simple simulation: what's the new end date for the block?
         # In a real app we'd run the propagation in-memory
-        from datetime import timedelta
         new_end = task.end_date + timedelta(days=days) if task.end_date else None
-        
+
         return Response({
             'new_end_date': new_end.strftime('%Y-%m-%d') if new_end else None,
-            'impacted_tasks_count': task.dependent_tasks.count()
+            'impacted_tasks_count': task.outgoing_dependencies.count()
         })
-
 
     @action(detail=True, methods=['post'])
     def recalculate(self, request, pk=None):
         task = self.get_object()
+        self._require_edit(task)
         PlanningImportService.recalculate_block_schedule(task.block)
         return Response({'status': 'schedule recalculated'})
 
     @action(detail=True, methods=['post'])
     def shift(self, request, pk=None):
         task = self.get_object()
+        self._require_edit(task)
         new_start_date_str = request.data.get('start_date')
         if not new_start_date_str:
             return Response({'error': 'start_date is required'}, status=status.HTTP_400_BAD_REQUEST)
         try:
             new_start_date = datetime.date.fromisoformat(new_start_date_str)
-        except ValueError:
+        except (ValueError, TypeError):
             return Response({'error': 'invalid date format'}, status=status.HTTP_400_BAD_REQUEST)
-        
+
         PlanningImportService.shift_task_with_propagation(task, new_start_date)
         return Response({'status': 'task shifted'})
 
 
 class TaskDependencyViewSet(viewsets.ModelViewSet):
-    queryset = TaskDependency.objects.all()
+    queryset = TaskDependency.objects.select_related(
+        'from_task__block__project', 'to_task__block__project'
+    ).all().order_by('id')
     serializer_class = TaskDependencySerializer
     permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        user = self.request.user
+        if access.has_global_access(user):
+            return qs
+        visible = Q(from_task__block__project_id__in=access.project_ids_with_perm(user, 'can_view_all_tasks'))
+        if access.can_manage_library(user):
+            visible |= Q(from_task__block__project__isnull=True)
+        return qs.filter(visible)
+
+    def _require_edit(self, *tasks):
+        for task in tasks:
+            _require_block_edit(self.request.user, task.block)
+
+    def perform_create(self, serializer):
+        from_task = serializer.validated_data['from_task']
+        to_task = serializer.validated_data['to_task']
+        if from_task == to_task:
+            raise ValidationError("Задача не может зависеть сама от себя.")
+        self._require_edit(from_task, to_task)
+        serializer.save()
+
+    def perform_update(self, serializer):
+        self._require_edit(serializer.instance.from_task, serializer.instance.to_task)
+        self._require_edit(
+            serializer.validated_data.get('from_task', serializer.instance.from_task),
+            serializer.validated_data.get('to_task', serializer.instance.to_task),
+        )
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        self._require_edit(instance.from_task, instance.to_task)
+        instance.delete()
 
 
 class AnalyticsViewSet(viewsets.ViewSet):
@@ -840,22 +1062,31 @@ class AnalyticsViewSet(viewsets.ViewSet):
         from matching.models import EmployeeProfile
         from workflows.models import WorkflowTask
         user = request.user
-        if user.role == 'EMPLOYEE':
+        if not access.can_view_staff(user):
             return Response({
                 'kpis': {'total_projects': 0, 'active_projects': 0, 'total_employees': 0, 'avg_progress': 0},
                 'domain_stats': [],
                 'performance_trend': []
             })
 
-        total_projects = Project.objects.count()
-        active_projects = Project.objects.filter(status__in=['ACTIVE', 'AT_RISK']).count()
-        total_employees = EmployeeProfile.objects.count()
+        # Менеджер проекта видит аналитику только по своим проектам
+        projects = Project.objects.all()
         workflow_tasks = WorkflowTask.objects.all()
+        profiles = EmployeeProfile.objects.all()
+        if not access.has_global_access(user):
+            managed_ids = list(access.managed_project_ids(user))
+            projects = projects.filter(id__in=managed_ids)
+            workflow_tasks = workflow_tasks.filter(workflow__project_id__in=managed_ids)
+            profiles = profiles.filter(user__project_memberships__project_id__in=managed_ids).distinct()
+
+        total_projects = projects.count()
+        active_projects = projects.filter(status__in=['ACTIVE', 'AT_RISK']).count()
+        total_employees = profiles.count()
         total_tasks_count = workflow_tasks.count()
         done_tasks_count = workflow_tasks.filter(status='DONE').count()
         avg_progress = round((done_tasks_count / total_tasks_count * 100)) if total_tasks_count > 0 else 0
 
-        domain_stats = EmployeeProfile.objects.values('domain').annotate(
+        domain_stats = EmployeeProfile.objects.filter(id__in=profiles.values('id')).values('domain').annotate(
             avg_load=Avg('workload_entries__load_percent'),
             emp_count=Count('id', distinct=True)
         )
@@ -864,8 +1095,8 @@ class AnalyticsViewSet(viewsets.ViewSet):
         performance_trend = []
         for i in range(29, -1, -1):
             date = today - timedelta(days=i)
-            actual = WorkflowTask.objects.filter(status='DONE', completed_at__date=date).count()
-            planned = WorkflowTask.objects.filter(due_date__date=date).count()
+            actual = workflow_tasks.filter(status='DONE', completed_at__date=date).count()
+            planned = workflow_tasks.filter(due_date__date=date).count()
             performance_trend.append({'period': date.strftime('%d.%m'), 'planned': planned, 'actual': actual})
 
         return Response({

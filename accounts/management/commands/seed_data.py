@@ -3,6 +3,7 @@ Management command: python manage.py seed_data
 
 Creates:
   - 1 admin user (admin / admin123)
+  - 1 general manager (g.orlova) and 1 project manager (p.sidorov) — password123
   - 6 employees (e.g. a.ivanov / password123)
   - 18 skills across 4 categories
   - 5 projects with members and audit logs
@@ -45,7 +46,7 @@ class Command(BaseCommand):
                 'role': 'ADMIN',
                 'is_staff': True,
                 'is_superuser': True,
-                'department': 'Management',
+                'domain': 'Management',
             },
         )
         if created:
@@ -57,12 +58,36 @@ class Command(BaseCommand):
 
         # Employee definitions
         employees_data = [
+            # Руководитель проектов: видит все проекты, но не админ-панель
+            {
+                'username': 'g.orlova',
+                'first_name': 'Galina',
+                'last_name': 'Orlova',
+                'email': 'g.orlova@company.com',
+                'domain': 'Management',
+                'role': 'GENERAL_MANAGER',
+                'position': 'Head of PMO',
+                'hourly_rate': 6000,
+                'bio': 'Oversees the whole project portfolio.',
+            },
+            # Менеджер проекта: видит только закреплённые за ним проекты
+            {
+                'username': 'p.sidorov',
+                'first_name': 'Pavel',
+                'last_name': 'Sidorov',
+                'email': 'p.sidorov@company.com',
+                'domain': 'Management',
+                'role': 'MANAGER',
+                'position': 'Project Manager',
+                'hourly_rate': 5000,
+                'bio': 'Delivery manager for data and design projects.',
+            },
             {
                 'username': 'a.ivanov',
                 'first_name': 'Alexei',
                 'last_name': 'Ivanov',
                 'email': 'a.ivanov@company.com',
-                'department': 'IT',
+                'domain': 'IT',
                 'position': 'Senior Backend Developer',
                 'hourly_rate': 4500,
                 'bio': 'Expert in Python and distributed systems.',
@@ -72,7 +97,7 @@ class Command(BaseCommand):
                 'first_name': 'Maria',
                 'last_name': 'Smirnova',
                 'email': 'm.smirnova@company.com',
-                'department': 'IT',
+                'domain': 'IT',
                 'position': 'Frontend Developer',
                 'hourly_rate': 3800,
                 'bio': 'React and TypeScript specialist.',
@@ -82,7 +107,7 @@ class Command(BaseCommand):
                 'first_name': 'Dmitri',
                 'last_name': 'Petrov',
                 'email': 'd.petrov@company.com',
-                'department': 'Analytics',
+                'domain': 'Analytics',
                 'position': 'Data Analyst',
                 'hourly_rate': 3200,
                 'bio': 'SQL and Python data pipelines.',
@@ -92,7 +117,7 @@ class Command(BaseCommand):
                 'first_name': 'Elena',
                 'last_name': 'Kozlova',
                 'email': 'e.kozlova@company.com',
-                'department': 'Design',
+                'domain': 'Design',
                 'position': 'UX/UI Designer',
                 'hourly_rate': 3500,
                 'bio': 'Figma and design systems expert.',
@@ -102,7 +127,7 @@ class Command(BaseCommand):
                 'first_name': 'Nikolai',
                 'last_name': 'Volkov',
                 'email': 'n.volkov@company.com',
-                'department': 'IT',
+                'domain': 'IT',
                 'position': 'DevOps Engineer',
                 'hourly_rate': 4200,
                 'bio': 'Kubernetes, CI/CD and infrastructure automation.',
@@ -112,7 +137,7 @@ class Command(BaseCommand):
                 'first_name': 'Sofia',
                 'last_name': 'Lebedeva',
                 'email': 's.lebedeva@company.com',
-                'department': 'QA',
+                'domain': 'QA',
                 'position': 'QA Engineer',
                 'hourly_rate': 2900,
                 'bio': 'Automated and manual testing.',
@@ -124,24 +149,25 @@ class Command(BaseCommand):
             position = data.pop('position')
             hourly_rate = data.pop('hourly_rate')
             bio = data.pop('bio')
+            role = data.pop('role', 'EMPLOYEE')
 
             user, created = User.objects.get_or_create(
                 username=data['username'],
-                defaults={**data, 'role': 'EMPLOYEE'},
+                defaults={**data, 'role': role},
             )
             if created:
                 user.set_password('password123')
                 user.save()
                 self.stdout.write(f"  Created employee: {user.username} / password123")
 
-            department = data.get('department', '')
+            domain = data.get('domain', '')
             profile, _ = EmployeeProfile.objects.update_or_create(
                 user=user,
                 defaults={
                     'position': position,
                     'hourly_rate': hourly_rate,
                     'bio': bio,
-                    'department': department
+                    'domain': domain
                 },
             )
             self._employee_users.append((user, profile))
@@ -253,13 +279,24 @@ class Command(BaseCommand):
         user_map = {u.username: u for u, _ in self._employee_users}
         profile_map = {u.username: p for u, p in self._employee_users}
 
+        # Проекты, закреплённые за менеджером проекта (остальные ведёт администратор)
+        project_managers = {
+            'Analytics Dashboard': 'p.sidorov',
+            'Mobile App UX Overhaul': 'p.sidorov',
+        }
+
         self._projects = []
         for data in projects_data:
+            manager = user_map.get(project_managers.get(data['name'])) or admin_user
             project, created = Project.objects.get_or_create(
                 name=data['name'],
-                defaults={**data, 'manager': admin_user},
+                defaults={**data, 'manager': manager},
             )
             if created:
+                # Менеджер проекта всегда состоит в команде с ролью MANAGER
+                ProjectMember.objects.get_or_create(
+                    project=project, user=manager, defaults={'role': 'MANAGER'},
+                )
                 AuditLog.objects.create(
                     project=project,
                     user=admin_user,
@@ -288,7 +325,7 @@ class Command(BaseCommand):
                 if u:
                     ProjectMember.objects.get_or_create(
                         project=project, user=u,
-                        defaults={'role': role_map.get(uname, 'OTHER')},
+                        defaults={'role': role_map.get(uname, 'DEVELOPER')},
                     )
 
         # Add workload entries (for scoring)

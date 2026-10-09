@@ -76,11 +76,24 @@ class ProjectMember(models.Model):
     allocation_percentage = models.IntegerField(default=100, help_text="Процент занятости в этом проекте")
     joined_at = models.DateField(auto_now_add=True)
 
+    # Права участника внутри проекта (настраиваются менеджером проекта флажками).
+    # Для менеджеров проекта (role == 'MANAGER') все права считаются включёнными.
+    can_view_all_tasks = models.BooleanField(default=False, help_text="Видит все задачи проекта, а не только свои")
+    can_edit_tasks = models.BooleanField(default=False, help_text="Создаёт и редактирует задачи, этапы и процессы")
+    can_assign_tasks = models.BooleanField(default=False, help_text="Назначает исполнителей на задачи")
+    can_view_files = models.BooleanField(default=True, help_text="Видит файлы и базу знаний проекта")
+    can_edit_files = models.BooleanField(default=False, help_text="Загружает, изменяет и удаляет файлы проекта")
+    can_manage_members = models.BooleanField(default=False, help_text="Добавляет и исключает участников")
+
     class Meta:
         unique_together = ('project', 'user')
 
     def __str__(self):
         return f"{self.user.username} @ {self.project.name} ({self.role})"
+
+    @property
+    def is_manager(self):
+        return self.role == 'MANAGER'
 
 
 class PlanningBlock(models.Model):
@@ -163,7 +176,8 @@ class Task(models.Model):
         keywords = ["срочно", "критично", "горит", "в первую очередь", "авария", "срочно сделать", "asap"]
         text = f"{self.name or ''} {self.description or ''}".lower()
         is_urgent = any(kw in text for kw in keywords)
-        if is_urgent:
+        # order сбрасываем только в момент повышения приоритета, а не при каждом сохранении
+        if is_urgent and (self._state.adding or self.priority != 'URGENT'):
             self.priority = 'URGENT'
             self.order = 0
         super().save(*args, **kwargs)
@@ -203,7 +217,19 @@ class AuditLog(models.Model):
 
 
 class KnowledgeMaterial(models.Model):
+    """
+    Документ файлового хранилища / базы знаний.
+    project=None — общая база знаний организации, иначе — файл конкретного проекта
+    (доступ определяется правами can_view_files / can_edit_files участника).
+    """
+    CATEGORY_CHOICES = [
+        ('SPEC', 'Техническое задание'),
+        ('DOC', 'Документ'),
+        ('INSTRUCTION', 'Инструкция / регламент'),
+        ('OTHER', 'Прочее'),
+    ]
     title = models.CharField(max_length=255)
+    category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default='DOC')
     description = models.TextField(blank=True)
     file = models.FileField(upload_to='knowledge_base/', null=True, blank=True)
     text_instruction = models.TextField(blank=True)
@@ -212,6 +238,9 @@ class KnowledgeMaterial(models.Model):
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
 
     def __str__(self):
         return self.title

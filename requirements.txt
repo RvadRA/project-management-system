@@ -1,0 +1,14 @@
+# Прямые зависимости бэкенда (версии соответствуют рабочему окружению venv)
+Django==6.0.4
+djangorestframework==3.17.1
+djangorestframework-simplejwt==5.3.1
+django-cors-headers==4.9.0
+django-filter==24.2
+celery==5.6.3
+django-celery-beat==2.9.0
+django_celery_results==2.6.0
+redis==7.4.0
+eventlet==0.41.0
+psycopg2-binary==2.9.12
+pillow==12.2.0
+requests==2.33.1

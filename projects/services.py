@@ -119,15 +119,18 @@ class AssignmentService:
         task.assigned_to = user
         task.save(update_fields=['assigned_to'])
         
-        # Notify user
-        from notifications.tasks import send_notification_async
-        send_notification_async.delay(
-            user_id=user.id,
+        # Notify user (in-app + email/telegram)
+        project = task.block.project
+        from notifications.utils import notify
+        notify(
+            recipient=user,
             title=f"Новая задача: {task.name}",
-            body=f"Вы были назначены исполнителем задачи '{task.name}' в проекте '{task.block.project.name}'.",
-            channels=('email', 'telegram')
+            body=f"Вы были назначены исполнителем задачи '{task.name}'"
+                 + (f" в проекте '{project.name}'." if project else "."),
+            notif_type='TASK_ASSIGNED',
+            project_id=project.id if project else None,
         )
-        
+
         return task
 
 
@@ -388,17 +391,28 @@ class PlanningImportService:
         # 1. Forward Pass (Early Start/Finish)
         # Sort tasks topologically if possible, or just iterate until stable (since dependencies are FS mostly)
         # For simplicity in this demo, we'll use a multiple-pass approach or simple FS chain
+        by_id = {t.id: t for t in tasks}
+        # Учитываем только FS-зависимости внутри блока; считаем по объектам из by_id,
+        # т.к. dep.from_task / dep.to_task — отдельные экземпляры без рассчитанных полей
+        predecessors = {t.id: [] for t in tasks}
+        successors = {t.id: [] for t in tasks}
+        for t in tasks:
+            for dep in t.outgoing_dependencies.all():
+                if dep.type == 'FS' and dep.to_task_id in by_id:
+                    successors[t.id].append(by_id[dep.to_task_id])
+                    predecessors[dep.to_task_id].append(t)
+
         for t in tasks:
             t.es = 0
             t.ef = t.duration_days
-        
-        # Stability pass (max 10 iterations for safety or use topological sort)
-        for _ in range(10):
+
+        # Stability pass: цепочка длиной N сходится не более чем за N итераций
+        # (ограничение защищает от зацикливания при циклических зависимостях)
+        for _ in range(len(tasks)):
             changed = False
             for t in tasks:
-                incoming = t.incoming_dependencies.filter(type='FS')
-                if incoming.exists():
-                    max_ef = max(dep.from_task.ef for dep in incoming)
+                if predecessors[t.id]:
+                    max_ef = max(p.ef for p in predecessors[t.id])
                     if t.es != max_ef:
                         t.es = max_ef
                         t.ef = t.es + t.duration_days
@@ -411,12 +425,11 @@ class PlanningImportService:
             t.lf = max_project_ef
             t.ls = t.lf - t.duration_days
 
-        for _ in range(10):
+        for _ in range(len(tasks)):
             changed = False
             for t in tasks:
-                outgoing = t.outgoing_dependencies.filter(type='FS')
-                if outgoing.exists():
-                    min_ls = min(dep.to_task.ls for dep in outgoing)
+                if successors[t.id]:
+                    min_ls = min(n.ls for n in successors[t.id])
                     if t.lf != min_ls:
                         t.lf = min_ls
                         t.ls = t.lf - t.duration_days
@@ -444,9 +457,16 @@ class PlanningImportService:
         if not tasks.exists():
             return
             
-        base_date = start_date or tasks.first().start_date or datetime.date.today()
         calendar = block.calendar or (block.project.calendar if block.project else None)
-        
+        first = tasks.first()
+        if start_date:
+            base_date = start_date
+        elif first.start_date:
+            # Старт блока = дата первой задачи минус её смещение
+            base_date = add_working_days(first.start_date, -first.start_offset_days, calendar=calendar)
+        else:
+            base_date = (block.project.start_date if block.project else None) or datetime.date.today()
+
         for t in tasks:
             t.start_date = add_working_days(base_date, t.start_offset_days, calendar=calendar)
             t.end_date = add_working_days(t.start_date, t.duration_days, calendar=calendar)

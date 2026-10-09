@@ -1,107 +1,126 @@
 from rest_framework import permissions
+from rest_framework.exceptions import PermissionDenied
+
+from . import access
+
+
+def require(condition, message="У вас нет прав для выполнения этого действия."):
+    if not condition:
+        raise PermissionDenied(message)
+
+
+def require_project_perm(user, project, perm, message=None):
+    """403, если у пользователя нет права perm в проекте (менеджеры проекта имеют все права)."""
+    require(
+        access.has_project_perm(user, project, perm),
+        message or "Недостаточно прав в этом проекте.",
+    )
+
+
+def require_project_manager(user, project, message=None):
+    require(
+        access.is_project_manager(user, project),
+        message or "Действие доступно только менеджеру проекта.",
+    )
+
+
+class IsAdmin(permissions.BasePermission):
+    message = "Действие доступно только администратору."
+
+    def has_permission(self, request, view):
+        return access.is_admin(request.user)
+
+
+class IsAdminOrReadOnly(permissions.BasePermission):
+    """Справочники и системные настройки: читать могут все, менять — только администратор."""
+    message = "Изменять системные справочники может только администратор."
+
+    def has_permission(self, request, view):
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        return access.is_admin(request.user)
+
+
+class CanViewStaff(permissions.BasePermission):
+    message = "Раздел доступен только менеджерам и администраторам."
+
+    def has_permission(self, request, view):
+        return access.can_view_staff(request.user)
+
+
+class CanManageLibraryOrReadOnly(permissions.BasePermission):
+    """Библиотека шаблонов: читать могут все, менять — администратор, руководитель, менеджеры."""
+    message = "Изменять шаблоны могут только менеджеры и администраторы."
+
+    def has_permission(self, request, view):
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        return access.can_manage_library(request.user)
+
 
 class IsProjectManagerOrAdmin(permissions.BasePermission):
     """
-    Позволяет доступ только администраторам системы или менеджерам конкретного проекта.
+    Запись разрешена администратору, руководителю проектов и менеджерам
+    конкретного проекта. Объекты без проекта (шаблоны) — тем, кто ведёт библиотеку.
     """
+    message = "Действие доступно только менеджеру проекта."
+
     def has_permission(self, request, view):
-        # Для GET запросов (list) разрешаем всем, фильтрация будет в QuerySet
         if request.method in permissions.SAFE_METHODS:
             return True
-        
-        # Глобальные права для админов и менеджеров
-        if request.user.role in ('ADMIN', 'MANAGER'):
+        if access.has_global_access(request.user):
             return True
-            
-        # Для POST запросов (create) проверяем проект в данных
-        if request.method == 'POST':
-            project_id = request.data.get('project')
-            if project_id:
-                from .models import Project
-                return Project.objects.filter(id=project_id, members__user=request.user, members__role='MANAGER').exists()
-            
-            # Если проект не указан в данных, возможно это создание задачи в блоке/процессе
-            block_id = request.data.get('block')
-            if block_id:
-                from .models import PlanningBlock
-                return PlanningBlock.objects.filter(id=block_id, project__members__user=request.user, project__members__role='MANAGER').exists()
-            
-            workflow_id = request.data.get('workflow')
-            if workflow_id:
-                from workflows.models import WorkflowInstance
-                return WorkflowInstance.objects.filter(id=workflow_id, project__members__user=request.user, project__members__role='MANAGER').exists()
-
-        # Для PATCH/PUT/DELETE проверка будет в has_object_permission
+        if request.method == 'POST' and not view.kwargs.get('pk'):
+            project = self._project_from_data(request.data)
+            if project is not None:
+                return access.is_project_manager(request.user, project)
+            return access.can_manage_library(request.user)
+        # PATCH/PUT/DELETE и detail-actions проверяются в has_object_permission
         return True
 
     def has_object_permission(self, request, view, obj):
-        if request.user.role in ('ADMIN', 'MANAGER'):
+        if request.method in permissions.SAFE_METHODS:
             return True
-        
-        # Если объект - Проект
-        if hasattr(obj, 'members') and not hasattr(obj, 'project'): # Project model
-            return obj.members.filter(user=request.user, role='MANAGER').exists()
-        
-        # Если объект имеет прямую связь с проектом (PlanningBlock, WorkflowInstance)
-        if hasattr(obj, 'project'):
-            if not obj.project:
-                return False
-            return obj.project.members.filter(user=request.user, role='MANAGER').exists()
-        
-        # Если объект - Задача (Task или WorkflowTask)
-        if hasattr(obj, 'block'): # Planning Task
-            return obj.block.project.members.filter(user=request.user, role='MANAGER').exists()
-        
-        if hasattr(obj, 'workflow'): # Workflow Task
-            if not obj.workflow.project:
-                return False
-            return obj.workflow.project.members.filter(user=request.user, role='MANAGER').exists()
+        project = access.project_of(obj)
+        if project is None:
+            return access.can_manage_library(request.user)
+        return access.is_project_manager(request.user, project)
 
-        return False
+    @staticmethod
+    def _project_from_data(data):
+        from .models import Project, PlanningBlock
+        from workflows.models import WorkflowInstance
+        try:
+            if data.get('project'):
+                return Project.objects.filter(id=data.get('project')).first()
+            if data.get('block'):
+                block = PlanningBlock.objects.select_related('project').filter(id=data.get('block')).first()
+                return block.project if block else None
+            if data.get('workflow'):
+                wf = WorkflowInstance.objects.select_related('project').filter(id=data.get('workflow')).first()
+                return wf.project if wf else None
+        except (TypeError, ValueError):
+            return None
+        return None
+
 
 class IsProjectMember(permissions.BasePermission):
-    """
-    Позволяет доступ всем участникам проекта.
-    """
+    """Доступ всем участникам проекта."""
+
     def has_object_permission(self, request, view, obj):
-        if request.user.role in ('ADMIN', 'MANAGER'):
-            return True
-            
-        project = None
-        if hasattr(obj, 'members'):
-            project = obj
-        elif hasattr(obj, 'project'):
-            project = obj.project
-        elif hasattr(obj, 'block'):
-            project = obj.block.project
-        elif hasattr(obj, 'workflow'):
-            project = obj.workflow.project
-            
-        if not project:
-            return False
-            
-        return project.members.filter(user=request.user).exists()
+        project = access.project_of(obj)
+        if project is None:
+            return access.has_global_access(request.user)
+        return access.is_project_member(request.user, project)
+
 
 class CanUpdateTaskStatus(permissions.BasePermission):
-    """
-    Только исполнитель задачи или менеджер проекта может менять статус.
-    """
+    """Статус задачи меняет её исполнитель либо участник с правом редактирования задач."""
+
     def has_object_permission(self, request, view, obj):
-        if request.user.role in ('ADMIN', 'MANAGER'):
+        if getattr(obj, 'assigned_to_id', None) == request.user.id:
             return True
-            
-        # Менеджер проекта всегда может
-        project = None
-        if hasattr(obj, 'workflow'):
-            project = obj.workflow.project
-        elif hasattr(obj, 'block'):
-            project = obj.block.project
-            
-        if project:
-            if project.members.filter(user=request.user, role='MANAGER').exists():
-                return True
-                
-        if hasattr(obj, 'assigned_to') and obj.assigned_to == request.user:
-            return True
-            
-        return False
+        project = access.project_of(obj)
+        if project is None:
+            return access.has_global_access(request.user)
+        return access.has_project_perm(request.user, project, 'can_edit_tasks')

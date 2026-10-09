@@ -48,10 +48,10 @@ def execute_integration_task(task_id):
 
     # Create report
     from .models import TaskReport
-    TaskReport.objects.create(
+    # У задачи один отчёт (OneToOne) — при повторном запуске обновляем его
+    TaskReport.objects.update_or_create(
         task=task,
-        text_content=f"Celery Integration {'Success' if success else 'Error'}: {message}",
-        submitted_at=timezone.now()
+        defaults={'text_content': f"Celery Integration {'Success' if success else 'Error'}: {message}"},
     )
 
     if success:

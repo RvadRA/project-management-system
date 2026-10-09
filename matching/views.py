@@ -21,23 +21,27 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
+from projects.permissions import CanViewStaff
+from .employee_views import CanManageStaffOrReadOnly
 from .models import Skill, EmployeeProfile, WorkloadEntry
 from .serializers import CandidateScoreSerializer, SkillSerializer
 from .scoring import rank_candidates, RequiredSkill
 
 
 class MatchingViewSet(viewsets.ViewSet):
-    permission_classes = [IsAuthenticated]
+    # Подбор раскрывает ставки и загрузку сотрудников — только для менеджеров и выше
+    permission_classes = [IsAuthenticated, CanViewStaff]
 
     @action(detail=False, methods=['get'], url_path='recommend/(?P<task_id>[^/.]+)')
     def recommend_for_task(self, request, task_id=None):
         """GET /api/matching/recommend/{task_id}/"""
         from .services import RecommendationService
+        from workflows.models import WorkflowTask
         try:
             results = RecommendationService.recommend_for_task(task_id)
             return Response(results)
-        except Exception as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except (WorkflowTask.DoesNotExist, ValueError):
+            return Response({'error': 'Задача не найдена.'}, status=status.HTTP_404_NOT_FOUND)
 
     @action(detail=False, methods=['post'])
     def rank(self, request):
@@ -166,6 +170,6 @@ class MatchingViewSet(viewsets.ViewSet):
 
 
 class SkillViewSet(viewsets.ModelViewSet):
-    queryset = Skill.objects.all()
+    queryset = Skill.objects.all().order_by('category', 'name')
     serializer_class = SkillSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanManageStaffOrReadOnly]
