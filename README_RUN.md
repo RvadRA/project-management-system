@@ -27,7 +27,9 @@ source venv/Scripts/activate
 python manage.py migrate
 
 # Загрузка тестовых данных
-python manage.py populate_templates
+python manage.py seed_data
+python manage.py seed_enterprise_data
+python populate_templates.py
 
 # Создание суперпользователя (если нужно)
 python manage.py createsuperuser

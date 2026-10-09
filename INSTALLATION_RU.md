@@ -85,7 +85,9 @@ python manage.py migrate
 python manage.py createsuperuser
 
 # Загрузка тестовых данных (опционально)
-python manage.py populate_templates
+python manage.py seed_data
+python manage.py seed_enterprise_data
+python populate_templates.py
 ```
 
 ### Шаг 4: Запуск приложения

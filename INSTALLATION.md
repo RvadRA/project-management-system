@@ -85,7 +85,9 @@ python manage.py migrate
 python manage.py createsuperuser
 
 # Load sample data (optional)
-python manage.py populate_templates
+python manage.py seed_data
+python manage.py seed_enterprise_data
+python populate_templates.py
 ```
 
 ### Step 4: Start the Application
@@ -253,7 +255,9 @@ python manage.py createsuperuser
 # Password: admin123
 
 # Load sample data
-python manage.py populate_templates
+python manage.py seed_data
+python manage.py seed_enterprise_data
+python populate_templates.py
 ```
 
 ### Step 8: Install Frontend Dependencies

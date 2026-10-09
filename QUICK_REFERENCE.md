@@ -52,7 +52,9 @@ python manage.py migrate app_name 0001
 python manage.py createsuperuser
 
 # Загрузка тестовых данных
-python manage.py populate_templates
+python manage.py seed_data
+python manage.py seed_enterprise_data
+python populate_templates.py
 
 # Проверка конфигурации
 python manage.py check
