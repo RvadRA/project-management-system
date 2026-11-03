@@ -1,0 +1,8 @@
+{
+  "fixture": "synthetic_seed42",
+  "marked_at": "2026-10-20T00:00:00+00:00",
+  "note": "No direct replacement run; retained only as a historical smoke check.",
+  "reason": "Generated with synthetic-v1 and/or the pre-fix availability policy; not comparable to synthetic-v2 results.",
+  "stale": true,
+  "superseded_by": "synthetic-v2 availability/hash policy; smoke run only"
+}

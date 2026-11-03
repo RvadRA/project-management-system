@@ -66,3 +66,62 @@ export const NO_PROJECT_PERMISSIONS: ProjectPermissions = {
 export const projectPerms = (
   project: { my_permissions?: ProjectPermissions | null } | null | undefined,
 ): ProjectPermissions => project?.my_permissions ?? NO_PROJECT_PERMISSIONS;
+
+// ── Должность участника в проекте ───────────────────────────────────────────
+// В системе три разных понятия, которые раньше все назывались «роль»:
+//   1. Роль в системе (ROLE_LABELS) — уровень доступа учётной записи, задаёт администратор.
+//   2. Должность в проекте — чем человек занят в проекте (справочник «Должности»), на права не влияет.
+//   3. Менеджер проекта + флажки прав — что участнику разрешено в конкретном проекте.
+
+export const MEMBER_ROLE_MANAGER = 'MANAGER';
+/** Значение ProjectMember.role для участника без должности */
+export const MEMBER_ROLE_DEFAULT = 'DEVELOPER';
+
+/** Старые встроенные значения ProjectMember.role — остались в данных, новым участникам не назначаются */
+const LEGACY_MEMBER_ROLES: Record<string, string> = {
+  DEVELOPER: 'Участник',
+  ANALYST: 'Аналитик',
+  DESIGNER: 'Дизайнер',
+  QA: 'Тестировщик',
+  OTHER: 'Участник',
+};
+
+/** «Project Manager» из справочника должностей равнозначен менеджеру проекта (как и на сервере). */
+export const isPmRoleName = (name: string | null | undefined) =>
+  /manager|менеджер|руководитель/i.test(name ?? '');
+
+export const memberRoleLabel = (role: string | null | undefined) =>
+  role === MEMBER_ROLE_MANAGER ? 'Менеджер проекта' : LEGACY_MEMBER_ROLES[role ?? ''] ?? role ?? 'Участник';
+
+interface MemberLike {
+  role: string;
+  role_ref?: number | null;
+  role_info?: { id: number; name: string } | null;
+  is_manager?: boolean;
+}
+
+export const isMemberManager = (m: MemberLike) => m.is_manager ?? m.role === MEMBER_ROLE_MANAGER;
+
+/** Подпись должности участника для отображения. */
+export const memberPositionLabel = (m: MemberLike) =>
+  isMemberManager(m) ? 'Менеджер проекта' : m.role_info?.name ?? memberRoleLabel(m.role);
+
+/** Значение для MemberRoleSelect по данным участника. */
+export const memberRoleValue = (m: MemberLike) => {
+  if (isMemberManager(m)) return MEMBER_ROLE_MANAGER;
+  if (m.role_ref) return String(m.role_ref);
+  return m.role === MEMBER_ROLE_DEFAULT || m.role === 'OTHER' ? '' : m.role;
+};
+
+/** Превращает значение MemberRoleSelect в параметры запроса members/add. */
+export const resolveMemberRole = (
+  value: string,
+  positions: { id: number; name: string }[],
+): { role: string; roleRefId?: number } => {
+  if (value === MEMBER_ROLE_MANAGER) {
+    return { role: MEMBER_ROLE_MANAGER, roleRefId: positions.find(p => isPmRoleName(p.name))?.id };
+  }
+  const position = positions.find(p => String(p.id) === value);
+  if (position) return { role: position.name.slice(0, 30), roleRefId: position.id };
+  return { role: value || MEMBER_ROLE_DEFAULT };
+};

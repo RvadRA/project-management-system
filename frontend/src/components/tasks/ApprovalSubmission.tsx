@@ -12,7 +12,7 @@ interface ApprovalSubmissionProps {
 }
 
 export function ApprovalSubmission({ task, onClose }: ApprovalSubmissionProps) {
-  const { submitTaskReport, approveTask } = useAppContext();
+  const { approveTask, rejectTask, extractError } = useAppContext();
   const [decision, setDecision] = useState<'approve' | 'reject' | null>(null);
   const [comment, setComment] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -40,14 +40,13 @@ export function ApprovalSubmission({ task, onClose }: ApprovalSubmissionProps) {
         await approveTask(task.id);
         toast.success('Задача утверждена!');
       } else {
-        await submitTaskReport(task.id, {
-          text_content: `ОТКЛОНЕНО\nПричина: ${comment}`,
-        });
-        toast.success('Задача отклонена с комментарием');
+        // Отказ останавливает процесс на этой задаче и уведомляет менеджера проекта
+        await rejectTask(task.id, comment.trim());
+        toast.success('Отклонено. Менеджер проекта получил уведомление');
       }
       onClose();
     } catch (err: any) {
-      toast.error('Ошибка при обработке решения');
+      toast.error(extractError(err, 'Ошибка при обработке решения'));
     } finally {
       setSubmitting(false);
     }

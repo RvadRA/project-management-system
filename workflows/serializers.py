@@ -1,3 +1,4 @@
+from django.db import transaction
 from rest_framework import serializers
 from .models import (
     WorkflowTemplate, WorkflowTaskTemplate,
@@ -6,6 +7,26 @@ from .models import (
 
 # Expose on the model class for view-level validation
 WorkflowTask.STATUS_CHOICES = WorkflowTask.STATUS_CHOICES  # noqa: keep for views import
+
+
+def assert_template_is_acyclic(template):
+    """
+    Шаги шаблона не должны ждать друг друга по кругу: такой процесс после запуска
+    остановился бы навсегда — ни одна задача цикла не смогла бы начаться.
+    """
+    steps = list(template.task_templates.prefetch_related('depends_on'))
+    waiting = {step.id: {dep.id for dep in step.depends_on.all()} for step in steps}
+    names = {step.id: step.name for step in steps}
+    while waiting:
+        ready = [step_id for step_id, deps in waiting.items() if not deps]
+        if not ready:
+            stuck = ', '.join(f'«{names[i]}»' for i in list(waiting)[:4])
+            raise serializers.ValidationError(
+                {'task_templates': f'Шаги ждут друг друга по кругу: {stuck}. Уберите одну из связей.'})
+        for step_id in ready:
+            del waiting[step_id]
+        for deps in waiting.values():
+            deps.difference_update(ready)
 
 
 class WorkflowTaskTemplateSerializer(serializers.ModelSerializer):
@@ -17,19 +38,61 @@ class WorkflowTaskTemplateSerializer(serializers.ModelSerializer):
         fields = '__all__'
         extra_kwargs = {'template': {'required': False}}
 
+    def validate_name(self, value):
+        if not value.strip():
+            raise serializers.ValidationError('Укажите название шага.')
+        return value.strip()
+
+    def validate_sla_hours(self, value):
+        if not 1 <= value <= 8760:
+            raise serializers.ValidationError('Срок шага — от 1 часа до года.')
+        return value
+
+    def validate_checklist(self, value):
+        if not isinstance(value, list):
+            raise serializers.ValidationError('Чек-лист — это список пунктов.')
+        return [str(item).strip() for item in value if str(item).strip()][:100]
+
+    def _check_dependencies(self, step):
+        """Связи — только между шагами одного шаблона и без циклов."""
+        foreign = step.depends_on.exclude(template_id=step.template_id)
+        if step.depends_on.filter(id=step.id).exists() or foreign.exists():
+            raise serializers.ValidationError({'depends_on': 'Шаг может зависеть только от других шагов своего шаблона.'})
+        assert_template_is_acyclic(step.template)
+
     # frontend_id / depends_on_fids нужны только вложенному сохранению шаблона
     # и не являются полями модели — при прямом CRUD их нужно отбросить
+    @transaction.atomic
     def create(self, validated_data):
         validated_data.pop('frontend_id', None)
         validated_data.pop('depends_on_fids', None)
-        if not validated_data.get('template'):
+        template = validated_data.get('template')
+        if not template:
             raise serializers.ValidationError({'template': 'Укажите шаблон процесса.'})
-        return super().create(validated_data)
+        explicit_links = 'depends_on' in validated_data
+        siblings = list(template.task_templates.prefetch_related('depends_on').order_by('order', 'id'))
+        step = super().create(validated_data)
 
+        # Шаг добавлен в конец списка. Если порядок в шаблоне задан связями, новый шаг без связей
+        # стартовал бы одновременно с первым — поэтому ставим его после нынешних последних шагов.
+        # (В шаблоне без связей порядок определяется полем order, там ничего делать не нужно.)
+        if not explicit_links and any(sibling.depends_on.all() for sibling in siblings):
+            if step.is_parallel and siblings:
+                step.depends_on.set(siblings[-1].depends_on.all())
+            else:
+                awaited = {dep.id for sibling in siblings for dep in sibling.depends_on.all()}
+                step.depends_on.set([sibling for sibling in siblings if sibling.id not in awaited])
+        self._check_dependencies(step)
+        return step
+
+    @transaction.atomic
     def update(self, instance, validated_data):
         validated_data.pop('frontend_id', None)
         validated_data.pop('depends_on_fids', None)
-        return super().update(instance, validated_data)
+        validated_data.pop('template', None)     # шаг не переезжает в другой шаблон
+        step = super().update(instance, validated_data)
+        self._check_dependencies(step)
+        return step
 
 
 class WorkflowTemplateSerializer(serializers.ModelSerializer):
@@ -38,54 +101,89 @@ class WorkflowTemplateSerializer(serializers.ModelSerializer):
     class Meta:
         model = WorkflowTemplate
         fields = '__all__'
+        read_only_fields = ['created_by']
 
+    def validate_name(self, value):
+        if not value.strip():
+            raise serializers.ValidationError('Укажите название шаблона.')
+        return value.strip()
+
+    def validate_task_templates(self, items):
+        seen = set()
+        for item in items:
+            fid = str(item.get('frontend_id') or '')
+            if fid and fid in seen:
+                raise serializers.ValidationError('У двух шагов совпадает идентификатор.')
+            seen.add(fid)
+        for item in items:
+            for dep in item.get('depends_on_fids') or []:
+                if dep == str(item.get('frontend_id') or ''):
+                    raise serializers.ValidationError(f'Шаг «{item.get("name")}» не может зависеть от самого себя.')
+                if dep not in seen:
+                    raise serializers.ValidationError(f'Шаг «{item.get("name")}» связан с шагом, которого нет в шаблоне.')
+        return items
+
+    @transaction.atomic
     def create(self, validated_data):
         task_templates_data = validated_data.pop('task_templates', [])
         template = WorkflowTemplate.objects.create(**validated_data)
-        # Задачи и зависимости между ними создаёт update()
-        return self.update(template, {'task_templates': task_templates_data})
+        self._sync_steps(template, task_templates_data)
+        return template
 
+    @transaction.atomic
     def update(self, instance, validated_data):
         task_templates_data = validated_data.pop('task_templates', None)
-        
-        # Update template fields
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
-
         if task_templates_data is not None:
-            # Delete old tasks
-            instance.task_templates.all().delete()
-            
-            # Map for dependency resolution (frontend ID -> created object)
-            id_map = {}
-            tasks_to_create = []
-
-            for task_data in task_templates_data:
-                # We expect 'frontend_id' if we want to resolve dependencies
-                frontend_id = task_data.pop('frontend_id', None)
-                depends_on_fids = task_data.pop('depends_on_fids', [])
-                
-                # Pop depends_on if it's there as a standard field to avoid issues
-                task_data.pop('depends_on', None)
-                
-                task_obj = WorkflowTaskTemplate(template=instance, **task_data)
-                tasks_to_create.append((task_obj, frontend_id, depends_on_fids))
-
-            # Create all tasks first
-            for task_obj, _, _ in tasks_to_create:
-                task_obj.save()
-
-            # Second pass: set dependencies
-            # We need a map of frontend_id -> task_obj.id
-            fid_to_obj = {f_id: t_obj for t_obj, f_id, _ in tasks_to_create if f_id}
-            
-            for task_obj, _, depends_on_fids in tasks_to_create:
-                if depends_on_fids:
-                    dep_tasks = [fid_to_obj[fid] for fid in depends_on_fids if fid in fid_to_obj]
-                    task_obj.depends_on.set(dep_tasks)
-
+            self._sync_steps(instance, task_templates_data)
         return instance
+
+    def _sync_steps(self, template, items):
+        """
+        Приводит шаги шаблона к присланному списку. Существующие шаги (frontend_id = их id)
+        обновляются на месте: сохраняются их идентификаторы, связь с уже запущенными задачами
+        и поля, которых нет в запросе (трудозатраты, вес, настройки интеграции). Новые шаги
+        создаются, отсутствующие в списке — удаляются.
+        """
+        existing = {step.id: step for step in template.task_templates.all()}
+        by_fid, kept, pending = {}, set(), []
+        for item in items:
+            data = dict(item)
+            fid = str(data.pop('frontend_id', '') or '')
+            dep_fids = data.pop('depends_on_fids', None)
+            for extra in ('depends_on', 'template', 'id'):
+                data.pop(extra, None)
+            step = existing.get(int(fid)) if fid.isdigit() and int(fid) not in kept else None
+            if step is not None:
+                for attr, value in data.items():
+                    setattr(step, attr, value)
+                step.save()
+            else:
+                step = WorkflowTaskTemplate.objects.create(template=template, **data)
+            kept.add(step.id)
+            if fid:
+                by_fid[fid] = step
+            pending.append((step, dep_fids))
+
+        template.task_templates.exclude(id__in=kept).delete()
+        for step, dep_fids in pending:
+            if dep_fids is not None:
+                step.depends_on.set([by_fid[fid] for fid in dep_fids if fid in by_fid])
+        assert_template_is_acyclic(template)
+
+        # Раскладка схемы хранится по идентификаторам шагов: у новых шагов временный
+        # идентификатор редактора заменяется настоящим, иначе при следующем открытии схема «рассыпается»
+        config = template.ui_config if isinstance(template.ui_config, dict) else {}
+        positions = config.get('positions')
+        if isinstance(positions, dict):
+            remapped = {}
+            for fid, step in by_fid.items():
+                if fid in positions:
+                    remapped[str(step.id)] = positions[fid]
+            template.ui_config = {**config, 'positions': remapped}
+            template.save(update_fields=['ui_config'])
 
 
 class TaskReportSerializer(serializers.ModelSerializer):
@@ -95,9 +193,15 @@ class TaskReportSerializer(serializers.ModelSerializer):
 
 
 class TaskAttachmentSerializer(serializers.ModelSerializer):
+    # Прямой путь к файлу не отдаём: скачивание идёт через API с проверкой прав
+    download_url = serializers.SerializerMethodField()
+
     class Meta:
         model = TaskAttachment
-        fields = ['id', 'original_name', 'uploaded_by', 'uploaded_at', 'file']
+        fields = ['id', 'original_name', 'uploaded_by', 'uploaded_at', 'download_url']
+
+    def get_download_url(self, obj):
+        return f'/workflows/tasks/{obj.task_id}/attachments/{obj.id}/download/'
 
 
 class WorkflowTaskSerializer(serializers.ModelSerializer):
@@ -105,10 +209,16 @@ class WorkflowTaskSerializer(serializers.ModelSerializer):
     attachments = TaskAttachmentSerializer(many=True, read_only=True)
     assigned_to_name = serializers.SerializerMethodField()
     is_overdue = serializers.SerializerMethodField()
+    is_blocked = serializers.SerializerMethodField()
 
     class Meta:
         model = WorkflowTask
         fields = '__all__'
+        read_only_fields = ['started_at', 'completed_at', 'created_at', 'review_comment']
+
+    def get_is_blocked(self, obj):
+        # Задача ждёт завершения предыдущих этапов (depends_on подгружается пачкой во вьюсетах)
+        return any(dep.status != 'DONE' for dep in obj.depends_on.all())
 
     def get_assigned_to_name(self, obj):
         if obj.assigned_to:
@@ -116,10 +226,7 @@ class WorkflowTaskSerializer(serializers.ModelSerializer):
         return None
 
     def get_is_overdue(self, obj):
-        from django.utils import timezone
-        if obj.due_date and obj.status not in ('DONE',):
-            return timezone.now() > obj.due_date
-        return False
+        return obj.is_overdue
 
 
 class WorkflowInstanceSerializer(serializers.ModelSerializer):

@@ -44,8 +44,8 @@ export const niceConfirm = (message: string): Promise<boolean> => {
       duration: Infinity,
       position: 'top-center',
       style: {
-        background: '#0f172a', // slate-900
-        border: '1px solid #1e293b', // slate-800
+        background: 'var(--slate-900)',
+        border: '1px solid var(--slate-700)',
         padding: '16px',
         borderRadius: '16px',
         boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1), 0 0 0 1px rgb(255 255 255 / 0.05)'

@@ -90,9 +90,33 @@ export interface Employee {
   hourly_rate: string;
   bio: string;
   current_workload_percentage: number;
+  /** Оценка трудозатрат открытых задач, ч (SLA — срок, а не работа) */
   active_task_hours: number;
+  open_task_count: number;
+  unestimated_task_count: number;
+  workload_entries: {
+    id: number;
+    project: number | null;
+    start_date: string;
+    end_date: string;
+    load_percent: number;
+    note: string;
+  }[];
   skills: EmployeeSkill[];
   certificates: Certificate[];
+  /** История участия в проектах и оценки руководителей */
+  participations?: {
+    id: number;
+    project: number;
+    project_name: string;
+    role: string;
+    stars: number | null;
+    comment?: string;
+    rated_by_name?: string | null;
+    rated_at: string | null;
+    joined_at: string | null;
+    left_at: string | null;
+  }[];
   total_tasks: number;
   completed_tasks: number;
   memberships: {
@@ -143,15 +167,23 @@ export interface KanbanTask {
   assigned_to: number | null;
   assigned_to_name: string | null;
   due_date: string | null;
+  /** Когда задача перешла в работу — с этого момента идёт SLA */
+  started_at?: string | null;
+  completed_at?: string | null;
   sla_hours: number;
   order: number;
   is_overdue: boolean;
+  /** Ждёт завершения предыдущих этапов процесса */
+  is_blocked?: boolean;
+  depends_on?: number[];
+  /** Комментарий проверяющего при возврате на доработку или отказе */
+  review_comment?: string;
   report: {
     text_content: string;
     checklist: { id: number; text: string; is_done: boolean }[];
   } | null;
   checklist?: { text: string; is_done: boolean }[];
-  attachments: { id: number; original_name: string; file: string }[];
+  attachments: { id: number; original_name: string; download_url: string }[];
   created_at: string;
 }
 
@@ -176,6 +208,22 @@ export interface Notification {
   link: string | null;
 }
 
+export interface PlanningTask {
+  id: number;
+  name: string;
+  duration_days: number;
+  start_offset_days: number;
+  estimated_hours: number;
+  required_roles?: { role: { name: string } }[];
+  incoming_dependencies?: unknown[];
+  subtasks?: PlanningTask[];
+}
+
+export interface PlanningRisk {
+  id: number;
+  name: string;
+}
+
 export interface PlanningBlock {
   id: number;
   name: string;
@@ -185,13 +233,26 @@ export interface PlanningBlock {
   avg_duration: number | null;
   complexity: string;
   success_rate: number;
-  tasks?: any[];
-  analytics?: {
-    avg_actual_duration: number;
-    success_rate: number;
-    usage_count: number;
+  tasks?: PlanningTask[];
+  parent?: number | null;
+  children?: PlanningBlock[];
+  source_template?: number | null;
+  /** Состав пакета / этапа */
+  stats?: {
+    task_count: number;
+    estimated_hours: number;
+    span_days: number;
+    dependency_count: number;
+    roles: string[];
   };
-  typical_risks?: any[];
+  /** Использование шаблона в проектах (только для шаблонов) */
+  analytics?: {
+    usage_count: number;
+    completed_count: number;
+    avg_actual_duration: number | null;
+    success_rate: number | null;
+  } | null;
+  typical_risks?: PlanningRisk[];
   calendar_info?: {
     id: number;
     name: string;
@@ -213,17 +274,24 @@ export interface AnalyticsData {
     active_projects: number;
     total_employees: number;
     avg_progress: number;
+    tasks_total: number;
+    tasks_done: number;
+    tasks_overdue: number;
   };
+  /** Средняя текущая загрузка сотрудников домена, включая свободных */
   domain_stats: {
     domain: string;
-    avg_load: number | null;
+    avg_load: number;
     emp_count: number;
+    overloaded: number;
+    free: number;
   }[];
   performance_trend: {
     period: string;
     planned: number;
     actual: number;
-}[];
+  }[];
+  period?: { days: number; bucket?: 'day' | 'week' };
 }
 
 export interface Risk {
@@ -261,6 +329,11 @@ export interface CalendarHoliday {
   name: string;
 }
 
+export interface AllocationPeriod {
+  start?: string;
+  end?: string;
+}
+
 export interface GlobalSetting {
   id: number;
   key: string;
@@ -294,13 +367,14 @@ interface AppContextType {
   } | null;
   loading: boolean;
   extractError: (err: any, defaultMsg: string) => string;
-  refreshData: () => Promise<void>;
+  refreshData: () => Promise<boolean>;
   updateTaskStatus: (id: number, status: KanbanTask['status']) => Promise<void>;
   createTask: (data: Record<string, any>) => Promise<void>;
   createProcess: (name: string, projectId: number, templateId?: number, description?: string) => Promise<WorkflowProcess | null>;
   submitTaskReport: (taskId: number, data: { text_content: string; checklist?: any[]; files?: File[] }) => Promise<void>;
   uploadTaskFile: (taskId: number, file: File) => Promise<void>;
   approveTask: (taskId: number) => Promise<void>;
+  rejectTask: (taskId: number, reason: string) => Promise<void>;
   updateProcess: (id: number, data: Record<string, any>) => Promise<void>;
   deleteProcess: (id: number) => Promise<void>;
   createProject: (data: Record<string, any>) => Promise<Project | null>;
@@ -321,9 +395,10 @@ interface AppContextType {
   deleteEmployeeCertificate: (profileId: number, certId: number) => Promise<void>;
   addUnavailabilityToEmployee: (profileId: number, data: Partial<Unavailability>) => Promise<void>;
   deleteEmployeeUnavailability: (profileId: number, itemId: number) => Promise<void>;
-  addMemberToProject: (projectId: number, userId: number, role: string, allocation: number, roleRefId?: number) => Promise<void>;
+  /** allocation = null — сервер сам возьмёт доступную загрузку; period — период загрузки (по умолчанию сроки проекта) */
+  addMemberToProject: (projectId: number, userId: number, role: string, allocation: number | null, roleRefId?: number, period?: AllocationPeriod) => Promise<void>;
   setMemberPermissions: (projectId: number, userId: number, permissions: Partial<Record<MemberPermissionKey, boolean>>) => Promise<void>;
-  assignEmployeeToProject: (empId: number, projectId: number, role: string, load: number, roleRefId?: number) => Promise<void>;
+  assignEmployeeToProject: (empId: number, projectId: number, role: string, load: number, roleRefId?: number, period?: AllocationPeriod) => Promise<boolean>;
   markNotificationRead: (id: number) => Promise<void>;
   markAllRead: () => Promise<void>;
   unreadCount: number;
@@ -409,8 +484,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   // иначе всё после первых 50 записей в интерфейс не попадало
   const fetchList = (url: string) => fetchAllPages(url).then(items => ({ data: items }));
 
-  const fetchAllData = useCallback(async (silent = false) => {
-    if (!user) return;
+  const fetchAllData = useCallback(async (silent = false): Promise<boolean> => {
+    if (!user) return true;
     if (!silent) setLoading(true);
     try {
       const results = await Promise.allSettled([
@@ -434,6 +509,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         fetchList('/projects/settings/'),         // 17
       ]);
 
+      const failed = [0, 1, 2, 16].some(index => results[index].status === 'rejected');
       const safe = (r: PromiseSettledResult<any>) =>
         r.status === 'fulfilled' ? getList(r.value) : [];
 
@@ -463,8 +539,10 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       setDomains(safe(results[13]));
       setCalendars(safe(results[14]));
       setGlobalAuditLogs(safe(results[15]));
+      return !failed;
     } catch (err) {
       console.error('fetchAllData error:', err);
+      return false;
     } finally {
       if (!silent) setLoading(false);
     }
@@ -496,15 +574,14 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
     try {
       await api.patch(`/workflows/tasks/${id}/status/`, { status });
-      await fetchAllData();
+      await fetchAllData(true);
       toast.success("Статус обновлен");
     } catch (err: any) {
       // Rollback
       setAllTasks(oldAllTasks);
       setMyTasks(oldMyTasks);
       setProcesses(oldProcesses);
-      const msg = err?.response?.data?.error || "Ошибка при обновлении статуса";
-      toast.error(msg);
+      toast.error(extractError(err, "Ошибка при обновлении статуса"));
     }
   };
 
@@ -582,7 +659,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   const approveTask = async (taskId: number) => {
     await api.post(`/workflows/tasks/${taskId}/approve/`);
-    await fetchAllData();
+    await fetchAllData(true);
+  };
+
+  // Возврат на доработку (менеджер) либо отказ в согласовании (согласующий) — с обязательной причиной
+  const rejectTask = async (taskId: number, reason: string) => {
+    await api.post(`/workflows/tasks/${taskId}/reject/`, { reason });
+    await fetchAllData(true);
   };
 
   const recalculateSchedule = async (taskId: number) => {
@@ -799,13 +882,18 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     await fetchAllData();
   };
 
-  const addMemberToProject = async (projectId: number, userId: number, role: string, allocation: number, roleRefId?: number) => {
+  const addMemberToProject = async (
+    projectId: number, userId: number, role: string, allocation: number | null,
+    roleRefId?: number, period?: AllocationPeriod,
+  ) => {
     try {
-      await api.post(`/projects/list/${projectId}/members/add/`, { 
-        user_id: userId, 
+      await api.post(`/projects/list/${projectId}/members/add/`, {
+        user_id: userId,
         role,
         role_ref_id: roleRefId,
-        allocation_percentage: allocation
+        allocation_percentage: allocation ?? undefined,
+        start_date: period?.start || undefined,
+        end_date: period?.end || undefined,
       });
       toast.success("Участник успешно добавлен");
       await fetchAllData();
@@ -851,17 +939,20 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     empId: number, projectId: number, role: string,
     load: number,
     roleRefId?: number,
-  ) => {
+    period?: AllocationPeriod,
+  ): Promise<boolean> => {
     const emp = employees.find(e => e.id === empId);
-    if (!emp) return;
-    // members/add already calls _sync_workload_entry on the backend — no duplicate call needed
+    if (!emp) throw new Error('Сотрудник не найден');
+    // members/add сам создаёт запись загрузки на указанный период
     await api.post(`/projects/list/${projectId}/members/add/`, {
       user_id: emp.user.id,
       role,
       role_ref_id: roleRefId,
       allocation_percentage: load,
+      start_date: period?.start || undefined,
+      end_date: period?.end || undefined,
     });
-    await fetchAllData();
+    return fetchAllData(true);
   };
 
   const saveBlockAsTemplate = async (blockId: number, name?: string) => {
@@ -980,7 +1071,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       transferBlock, addUnavailabilityToEmployee, deleteEmployeeUnavailability,
       saveBlockAsTemplate,
       markNotificationRead, markAllRead, fetchAuditLogs,
-      submitTaskReport, uploadTaskFile, approveTask,
+      submitTaskReport, uploadTaskFile, approveTask, rejectTask,
       recalculateSchedule, shiftTask,
       fetchAnalytics,
       createRisk, updateRisk, deleteRisk,

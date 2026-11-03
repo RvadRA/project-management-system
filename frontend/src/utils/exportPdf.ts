@@ -1,6 +1,3 @@
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
-
 /**
  * Sanitizes CSS by flattening computed styles to inline RGB/Hex
  * and removing problematic stylesheets.
@@ -83,6 +80,10 @@ export async function exportSectionsToPDF(
   filename: string,
   title?: string
 ): Promise<void> {
+  const [{ default: jsPDF }, { default: html2canvas }] = await Promise.all([
+    import('jspdf'),
+    import('html2canvas'),
+  ]);
   // Use Landscape for "full screen" feel on Analytics
   const pdf = new jsPDF('l', 'mm', 'a4');
   const pageWidth = pdf.internal.pageSize.getWidth();
@@ -140,6 +141,10 @@ export async function exportElementToPDF(
   elementId: string,
   filename: string
 ): Promise<void> {
+  const [{ default: jsPDF }, { default: html2canvas }] = await Promise.all([
+    import('jspdf'),
+    import('html2canvas'),
+  ]);
   const el = document.getElementById(elementId);
   if (!el) throw new Error(`Element #${elementId} not found`);
 

@@ -62,4 +62,14 @@ class UserViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         request.user.set_password(serializer.validated_data['new_password'])
         request.user.save()
-        return Response({'detail': 'Password updated successfully.'})
+        # Смена пароля завершает все прежние сессии: украденный токен перестаёт работать.
+        # Текущей сессии сразу выдаётся новая пара токенов.
+        from rest_framework_simplejwt.tokens import RefreshToken
+        from .auth_views import revoke_all_tokens, security_log
+        revoke_all_tokens(request.user)
+        refresh = RefreshToken.for_user(request.user)
+        security_log.info('password_changed user=%r', request.user.username)
+        return Response({
+            'detail': 'Пароль изменён. Остальные сессии завершены.',
+            'access': str(refresh.access_token), 'refresh': str(refresh),
+        })

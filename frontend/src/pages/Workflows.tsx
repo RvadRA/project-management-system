@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   GitBranch, Plus, Clock, AlertTriangle, CheckCircle2,
   Circle, Loader2, ArrowRight, X, FileText, Upload, List, ThumbsUp, Zap, Edit2, Trash2
@@ -7,8 +7,11 @@ import {
 import { useAppContext } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
 import { hasGlobalAccess, isStaff, projectPerms } from '../utils/roles';
+import { slaLabel, slaRatio } from '../utils/sla';
 import { toast } from 'react-hot-toast';
 import { niceConfirm } from '../utils/confirm';
+import { toDateKey, toEndOfDayIso } from '../utils/dates';
+import { downloadFile } from '../api/client';
 
 
 type TaskStatus = 'TODO' | 'IN_PROGRESS' | 'REVIEW' | 'DONE' | 'ESCALATED';
@@ -27,6 +30,12 @@ const taskTypeConfig: Record<string, { label: string; color: string; icon: any }
   CHECKLIST:   { label: 'Чек-лист',    color: 'bg-emerald-500/10 text-emerald-400', icon: List },
   APPROVAL:    { label: 'Утверждение', color: 'bg-amber-500/10 text-amber-400',   icon: ThumbsUp },
   INTEGRATION: { label: 'Интеграция',  color: 'bg-pink-500/10 text-pink-400',     icon: Zap },
+};
+
+const stepsLabel = (count: number) => {
+  const word = count % 10 === 1 && count % 100 !== 11 ? 'шаг'
+    : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 10 || count % 100 >= 20) ? 'шага' : 'шагов';
+  return `${count} ${word}`;
 };
 
 const STATUSES: TaskStatus[] = ['TODO', 'IN_PROGRESS', 'REVIEW', 'DONE', 'ESCALATED'];
@@ -48,7 +57,7 @@ export default function Workflows() {
   const navigate = useNavigate();
   const { 
     processes, templates, createProcess, updateProcess, deleteProcess,
-    updateTaskStatus, submitTaskReport, approveTask, projects, 
+    updateTaskStatus, submitTaskReport, approveTask, rejectTask, projects,
     employees, addMemberToProject, extractError,
     createTemplate, updateTemplate, deleteTemplate,
     createTaskTemplate, updateTaskTemplate, deleteTaskTemplate,
@@ -57,6 +66,14 @@ export default function Workflows() {
   const { user } = useAuth();
 
   const [activeProcessId, setActiveProcessId] = useState<number | null>(null);
+  // Переход по ссылке «Открыть» из ассистента: сразу показываем нужный процесс
+  const location = useLocation();
+  const linkedProcessId = (location.state as { openProcessId?: number } | null)?.openProcessId;
+  const [handledLink, setHandledLink] = useState('');
+  if (linkedProcessId && handledLink !== location.key) {
+    setHandledLink(location.key);
+    setActiveProcessId(linkedProcessId);
+  }
   const [draggedTaskId, setDraggedTaskId] = useState<number | null>(null);
   const [isProcessModalOpen, setIsProcessModalOpen] = useState(false);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
@@ -65,7 +82,9 @@ export default function Workflows() {
   const [pendingStatus, setPendingStatus] = useState<TaskStatus>('TODO');
   const [newProcessName, setNewProcessName] = useState('');
   const [newProcessDesc, setNewProcessDesc] = useState('');
-  const [activeTab, setActiveTab] = useState<'active' | 'catalog'>('active');
+  const [activeTab, setActiveTab] = useState<'active' | 'catalog'>(
+    (location.state as { tab?: string } | null)?.tab === 'catalog' ? 'catalog' : 'active',
+  );
 
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<any | null>(null);
@@ -82,6 +101,8 @@ export default function Workflows() {
   const [newTaskDesc, setNewTaskDesc] = useState('');
   const [newTaskType, setNewTaskType] = useState('TEXT_REPORT');
   const [newTaskSla, setNewTaskSla] = useState(24);
+  const [newTaskHours, setNewTaskHours] = useState(0);
+  const [newTaskDueDate, setNewTaskDueDate] = useState('');
   const [newTaskAssignee, setNewTaskAssignee] = useState<number | ''>('');
   const [submittingProcess, setSubmittingProcess] = useState(false);
   const [submittingTask, setSubmittingTask] = useState(false);
@@ -95,6 +116,7 @@ export default function Workflows() {
   const [editProcessDesc, setEditProcessDesc] = useState('');
 
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
+  const [reviewComment, setReviewComment] = useState('');
   const [reviewingTask, setReviewingTask] = useState<any | null>(null);
   const [isSubmitModalOpen, setIsSubmitModalOpen] = useState(false);
   const [submittingTaskRef, setSubmittingTaskRef] = useState<any | null>(null);
@@ -179,6 +201,7 @@ export default function Workflows() {
   const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); };
   
   const isBlocked = (task: any) => {
+    if (typeof task.is_blocked === 'boolean') return task.is_blocked;
     if (!task.depends_on || task.depends_on.length === 0) return false;
     return task.depends_on.some((depId: number) => {
       const dep = processTasks.find(t => t.id === depId);
@@ -259,6 +282,8 @@ export default function Workflows() {
     setNewTaskDesc('');
     setNewTaskType('TEXT_REPORT');
     setNewTaskSla(24);
+    setNewTaskHours(0);
+    setNewTaskDueDate('');
     setNewTaskAssignee('');
     setIsTaskModalOpen(true);
   };
@@ -271,7 +296,8 @@ export default function Workflows() {
     setSubmittingTask(true);
     try {
       if (newTaskAssignee && !projectMemberUserIds.has(Number(newTaskAssignee))) {
-        await addMemberToProject(activeProcess.project, Number(newTaskAssignee), 'DEVELOPER', 100);
+        if (!await niceConfirm('Сотрудник не в команде проекта. Добавить его в команду и назначить на задачу?')) return;
+        await addMemberToProject(activeProcess.project, Number(newTaskAssignee), 'DEVELOPER', null);
       }
 
       await createTask({
@@ -281,6 +307,8 @@ export default function Workflows() {
         task_type: newTaskType,
         status: pendingStatus,
         sla_hours: newTaskSla,
+        due_date: toEndOfDayIso(newTaskDueDate),
+        estimated_hours: newTaskHours || 0,
         assigned_to: newTaskAssignee || null,
       });
       setIsTaskModalOpen(false);
@@ -299,6 +327,8 @@ export default function Workflows() {
       description: task.description || '',
       task_type: task.task_type,
       sla_hours: task.sla_hours,
+      due_date: task.due_date ? toDateKey(new Date(task.due_date)) : '',
+      estimated_hours: task.estimated_hours || 0,
       assigned_to: task.assigned_to || '',
     });
     setIsEditTaskModalOpen(true);
@@ -314,11 +344,17 @@ export default function Workflows() {
     }
     setSubmittingTask(true);
     try {
+      if (editingTask.assigned_to && currentProject && !projectMemberUserIds.has(Number(editingTask.assigned_to))) {
+        if (!await niceConfirm('Сотрудник не в команде проекта. Добавить его в команду и назначить на задачу?')) return;
+        await addMemberToProject(currentProject.id, Number(editingTask.assigned_to), 'DEVELOPER', null);
+      }
       await updateWorkflowTask(editingTask.id, {
         name: editingTask.name,
         description: editingTask.description || '',
         task_type: editingTask.task_type,
         sla_hours: editingTask.sla_hours,
+        due_date: toEndOfDayIso(editingTask.due_date),
+        estimated_hours: Number(editingTask.estimated_hours) || 0,
         assigned_to: editingTask.assigned_to || null,
       });
       setIsEditTaskModalOpen(false);
@@ -353,8 +389,17 @@ export default function Workflows() {
     e.preventDefault();
     if (!canManageTemplates) return;
     try {
-      if (editingTaskTemplate) await updateTaskTemplate(editingTaskTemplate.id, taskTemplateFormData);
-      else await createTaskTemplate(taskTemplateFormData);
+      // Связи между шагами (depends_on) здесь не меняются — их ведёт визуальный редактор
+      const { id: _id, depends_on: _deps, ...fields } = taskTemplateFormData;
+      void _id; void _deps;
+      const payload = {
+        ...fields,
+        name: String(fields.name ?? '').trim(),
+        integration_url: String(fields.integration_url ?? '').trim() || null,
+        checklist: Array.isArray(fields.checklist) ? fields.checklist.map((item: string) => item.trim()).filter(Boolean) : [],
+      };
+      if (editingTaskTemplate) await updateTaskTemplate(editingTaskTemplate.id, payload);
+      else await createTaskTemplate(payload);
       toast.success('Шаг шаблона сохранен');
       setIsTaskTemplateModalOpen(false);
     } catch (err: any) {
@@ -363,16 +408,18 @@ export default function Workflows() {
   };
 
   return (
-    <div className="p-8 space-y-6 h-full flex flex-col">
-      <div className="flex items-center justify-between flex-shrink-0">
+    <div className="p-4 sm:p-8 space-y-6 h-full flex flex-col">
+      <div className="flex flex-wrap items-center justify-between gap-3 flex-shrink-0">
         <div>
           <h1 className="text-2xl font-bold text-slate-100 flex items-center gap-2">
             <GitBranch size={22} className="text-violet-400" /> Бизнес-процессы
           </h1>
-          <p className="text-sm text-slate-400 mt-1">Канбан-доска для управления задачами процесса</p>
+          <p className="text-sm text-slate-400 mt-1">
+            {activeTab === 'active' ? 'Канбан-доска для управления задачами процесса' : 'Шаблоны — готовые цепочки шагов, по которым запускаются процессы'}
+          </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           {canManageTemplates && (
             <div className="flex bg-slate-900 border border-slate-800 rounded-lg p-1 mr-2">
               <button 
@@ -420,7 +467,7 @@ export default function Workflows() {
         </div>
       </div>
 
-      <div className="flex items-center gap-3 flex-shrink-0">
+      <div className={`flex-wrap items-center gap-3 flex-shrink-0 ${activeTab === 'active' ? 'flex' : 'hidden'}`}>
         <select
           value={selectedProjectFilter || ''}
           onChange={e => setSelectedProjectFilter(e.target.value ? Number(e.target.value) : null)}
@@ -482,7 +529,7 @@ export default function Workflows() {
         )}
       </div>
 
-      {processTasks.length > 0 && (
+      {activeTab === 'active' && processTasks.length > 0 && (
         <div className="flex items-center gap-1 flex-shrink-0 bg-slate-900 border border-slate-800 rounded-lg px-4 py-3 overflow-x-auto">
           {processTasks.slice(0, 7).map((task, i, arr) => (
             <div key={task.id} className="flex items-center gap-1">
@@ -490,6 +537,7 @@ export default function Workflows() {
                 task.status === 'DONE'        ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' :
                 task.status === 'IN_PROGRESS' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' :
                 task.status === 'REVIEW'      ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' :
+                task.status === 'ESCALATED'   ? 'bg-red-500/10 text-red-400 border border-red-500/20' :
                 'bg-slate-800 text-slate-500 border border-slate-700'
               }`}>
                 {task.status === 'DONE' && <CheckCircle2 size={11} />}
@@ -505,7 +553,7 @@ export default function Workflows() {
       )}
 
       {activeTab === 'active' ? (
-        <div className="flex gap-4 flex-1 overflow-x-auto pb-4">
+        <div className="flex gap-4 flex-1 min-h-[320px] overflow-x-auto pb-4">
             {STATUSES.map(status => {
               const cfg = statusConfig[status];
               const Icon = cfg.icon;
@@ -567,7 +615,7 @@ export default function Workflows() {
                               )}
                               {isBlocked(task) && (
                                 <span className="text-[9px] bg-slate-800 text-slate-500 px-1.5 py-0.5 rounded border border-slate-700 flex items-center gap-1">
-                                  <X size={8} /> LOCKED
+                                  <X size={8} /> Ждёт этап
                                 </span>
                               )}
                             </div>
@@ -594,35 +642,33 @@ export default function Workflows() {
                             <p className="text-xs text-slate-400 leading-normal mb-2.5 line-clamp-2">{task.description}</p>
                           )}
                           
-                          <div className="mb-3">
-                            <div className="flex justify-between items-center mb-1">
-                              <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider">SLA Progress</span>
-                              <span className={`text-[9px] font-bold ${
-                                task.sla_hours > 0 && task.created_at && (Date.now() - new Date(task.created_at).getTime()) / (task.sla_hours * 3600000) > 1 ? 'text-red-400' : 'text-slate-500'
-                              }`}>
-                                {task.sla_hours > 0 && task.created_at
-                                  ? Math.round(Math.min(100, ((Date.now() - new Date(task.created_at).getTime()) / (task.sla_hours * 3600000)) * 100)) 
-                                  : 0}%
-                              </span>
-                            </div>
-                            <div className="h-1 bg-slate-800 rounded-full overflow-hidden">
-                              <div 
-                                className={`h-full transition-all duration-1000 ${
-                                  task.sla_hours > 0 && task.created_at && (Date.now() - new Date(task.created_at).getTime()) / (task.sla_hours * 3600000) > 1 ? 'bg-red-500' :
-                                  task.sla_hours > 0 && task.created_at && (Date.now() - new Date(task.created_at).getTime()) / (task.sla_hours * 3600000) > 0.7 ? 'bg-amber-500' : 'bg-emerald-500'
-                                }`}
-                                style={{ width: `${task.sla_hours > 0 && task.created_at ? Math.min(100, ((Date.now() - new Date(task.created_at).getTime()) / (task.sla_hours * 3600000)) * 100) : 0}%` }}
-                              />
-                            </div>
-                          </div>
+                          {/* Отсчёт SLA идёт с момента перехода задачи в работу, а не с создания процесса */}
+                          {(() => {
+                            const ratio = slaRatio(task);
+                            const pct = ratio === null ? 0 : Math.min(100, ratio * 100);
+                            const late = ratio !== null && ratio > 1;
+                            return (
+                              <div className="mb-3">
+                                <div className="flex justify-between items-center mb-1">
+                                  <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider">SLA</span>
+                                  <span className={`text-[9px] font-bold ${late ? 'text-red-400' : 'text-slate-500'}`}>
+                                    {slaLabel(task)}
+                                  </span>
+                                </div>
+                                <div className="h-1 bg-slate-800 rounded-full overflow-hidden">
+                                  <div
+                                    className={`h-full transition-all duration-1000 ${late ? 'bg-red-500' : ratio !== null && ratio > 0.7 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                                    style={{ width: `${pct}%` }}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })()}
 
-                          {/* SLA Escalation Banner */}
-                          {task.sla_hours > 0 && task.created_at && task.status !== 'DONE' && task.status !== 'ESCALATED' &&
-                            (Date.now() - new Date(task.created_at).getTime()) / (task.sla_hours * 3600000) > 1.5 && (
-                            <div className="mt-2 p-2 bg-red-500/10 border border-red-500/20 rounded-lg animate-pulse">
-                              <p className="text-[10px] text-red-400 flex items-center gap-1 font-bold">
-                                <AlertTriangle size={10} />
-                                Требуется эскалация! SLA превышен в {Math.round((Date.now() - new Date(task.created_at).getTime()) / (task.sla_hours * 3600000) * 10) / 10}x
+                          {task.review_comment && (task.status === 'IN_PROGRESS' || task.status === 'ESCALATED') && (
+                            <div className="mt-2 mb-2 p-2 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+                              <p className="text-[10px] text-amber-300 leading-relaxed">
+                                <span className="font-bold">Замечание проверяющего:</span> {task.review_comment}
                               </p>
                             </div>
                           )}
@@ -643,7 +689,9 @@ export default function Workflows() {
                               <span className="text-xs text-slate-500">{task.assigned_to_name || 'Не назначен'}</span>
                             </div>
                             <div className="flex items-center gap-1.5 border-l border-slate-800 pl-2 ml-2">
-                              <span className="text-[10px] text-slate-600 font-bold uppercase tracking-tighter">SLA {task.sla_hours}h</span>
+                              <span className="text-[10px] text-slate-600 font-bold uppercase tracking-tighter" title="Срок выполнения (SLA) и оценка трудозатрат">
+                                SLA {task.sla_hours} ч{task.estimated_hours > 0 ? ` · труд ${task.estimated_hours} ч` : ''}
+                              </span>
                             </div>
                           </div>
                           {task.report?.checklist && task.report.checklist.length > 0 && (
@@ -676,10 +724,18 @@ export default function Workflows() {
                               <Clock size={12} /> Проверить результат
                             </button>
                           )}
-                          {task.status === 'IN_PROGRESS' && (user?.id === task.assigned_to || isManager) && (
+                          {task.status === 'TODO' && !isBlocked(task) && (user?.id === task.assigned_to || isManager) && (
                             <button
-                              onClick={(e) => { 
-                                e.stopPropagation(); 
+                              onClick={(e) => { e.stopPropagation(); updateTaskStatus(task.id, 'IN_PROGRESS'); }}
+                              className="mt-3 w-full flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold text-violet-400 border border-violet-500/30 bg-violet-500/5 hover:bg-violet-500/15 rounded-lg transition-colors"
+                            >
+                              <ArrowRight size={12} /> Взять в работу
+                            </button>
+                          )}
+                          {(task.status === 'IN_PROGRESS' || task.status === 'ESCALATED') && (user?.id === task.assigned_to || isManager) && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
                                 setSubmittingTaskRef(task); 
                                 const initialCl = task.report?.checklist || task.checklist || [];
                                 setReportData({ text_content: '', checklist: [...initialCl], files: [] });
@@ -709,7 +765,7 @@ export default function Workflows() {
             })}
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 overflow-y-auto pb-10">
+        <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-6 flex-1 min-h-0 overflow-y-auto custom-scrollbar auto-rows-max content-start pb-10 pr-1">
           {templates.map(tpl => (
             <div key={tpl.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-6 hover:border-slate-700 transition-all group relative overflow-hidden flex flex-col">
               <div className="flex justify-between items-start mb-4">
@@ -718,11 +774,11 @@ export default function Workflows() {
                     <GitBranch size={20} />
                   </div>
                   <div>
-                    <h3 className="text-white font-bold">{tpl.name}</h3>
-                    <p className="text-[10px] text-slate-500 uppercase font-bold tracking-widest">{tpl.task_templates.length} шагов</p>
+                    <h3 className="text-white font-bold break-words">{tpl.name}</h3>
+                    <p className="text-[10px] text-slate-500 uppercase font-bold tracking-widest">{stepsLabel(tpl.task_templates.length)}</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className={`items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity ${canManageTemplates ? 'flex' : 'hidden'}`}>
                    <button onClick={() => navigate(`/workflows/editor/${tpl.id}`)} className="p-1.5 text-slate-400 hover:text-violet-400 hover:bg-slate-800 rounded-lg" title="Визуальный редактор"><GitBranch size={14}/></button>
                    <button onClick={() => { setEditingTemplate(tpl); setTemplateFormData({ name: tpl.name, description: tpl.description || '', is_published: tpl.is_published }); setIsTemplateModalOpen(true); }} className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg"><Edit2 size={14}/></button>
                    <button onClick={async () => { if(await niceConfirm('Удалить шаблон?')) deleteTemplate(tpl.id); }} className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded-lg"><Trash2 size={14}/></button>
@@ -731,13 +787,13 @@ export default function Workflows() {
               <p className="text-xs text-slate-500 mb-6 line-clamp-2">{tpl.description || 'Нет описания'}</p>
               
               <div className="space-y-2 flex-1">
-                 {tpl.task_templates.sort((a,b) => a.order - b.order).map((tt, idx) => (
+                 {[...tpl.task_templates].sort((a, b) => a.order - b.order || a.id - b.id).map((tt, idx) => (
                    <div key={tt.id} className="flex items-center gap-3 p-2 bg-slate-800/30 rounded-lg border border-slate-800/50 group/step">
                       <span className="text-[10px] font-bold text-slate-600 w-4">{idx+1}</span>
-                      <span className="text-xs text-slate-300 flex-1 truncate">{tt.name}</span>
+                      <span className="text-xs text-slate-300 flex-1 min-w-0 line-clamp-2 break-words" title={tt.name}>{tt.name}</span>
                       <div className="flex items-center gap-1.5">
-                         <span className={`text-[8px] font-bold px-1 rounded ${taskTypeConfig[tt.task_type]?.color || ''}`}>
-                            {tt.task_type.split('_')[0]}
+                         <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${taskTypeConfig[tt.task_type]?.color || ''}`}>
+                            {taskTypeConfig[tt.task_type]?.label ?? tt.task_type}
                          </span>
                           {canManageTemplates && (
                             <>
@@ -781,9 +837,12 @@ export default function Workflows() {
                     {tpl.is_published ? 'ОПУБЛИКОВАН' : 'ЧЕРНОВИК'}
                  </span>
                  {canCreateProcess && (
-                   <button 
+                   <button
                      onClick={() => { setSelectedProjectId(''); setSelectedTemplateId(tpl.id); setIsProcessModalOpen(true); }}
-                     className="text-xs font-bold text-violet-400 hover:text-violet-300 flex items-center gap-1.5"
+                     disabled={!tpl.is_published || tpl.task_templates.length === 0}
+                     title={!tpl.is_published ? 'Черновик: опубликуйте шаблон, чтобы запускать по нему процессы'
+                       : tpl.task_templates.length === 0 ? 'В шаблоне нет шагов' : 'Запустить процесс по этому шаблону'}
+                     className="text-xs font-bold text-violet-400 hover:text-violet-300 disabled:text-slate-600 disabled:cursor-not-allowed flex items-center gap-1.5"
                    >
                       Запустить <ArrowRight size={12} />
                    </button>
@@ -995,14 +1054,14 @@ export default function Workflows() {
                     onChange={e => setTaskTemplateFormData({...taskTemplateFormData, priority: e.target.value})}
                     className="w-full bg-slate-800/50 border border-slate-700 text-slate-100 text-sm rounded-xl px-4 py-3 focus:outline-none focus:border-violet-500 transition-all"
                    >
-                      <option value="LOW">Low</option>
-                      <option value="MEDIUM">Medium</option>
-                      <option value="HIGH">High</option>
-                      <option value="URGENT">Urgent</option>
+                      <option value="LOW">Низкий</option>
+                      <option value="MEDIUM">Средний</option>
+                      <option value="HIGH">Высокий</option>
+                      <option value="URGENT">Срочный</option>
                    </select>
                 </div>
                  <div>
-                   <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Порядок (0 = старт)</label>
+                   <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Порядок в списке</label>
                    <input 
                     type="number" required
                     value={taskTemplateFormData.order}
@@ -1010,11 +1069,32 @@ export default function Workflows() {
                     className="w-full bg-slate-800/50 border border-slate-700 text-slate-100 text-sm rounded-xl px-4 py-3 focus:outline-none focus:border-violet-500 transition-all"
                    />
                 </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Трудозатраты, ч</label>
+                  <input
+                    type="number" min={0} step={0.5}
+                    value={taskTemplateFormData.estimated_hours ?? 0}
+                    onChange={e => setTaskTemplateFormData({...taskTemplateFormData, estimated_hours: Number(e.target.value)})}
+                    className="w-full bg-slate-800/50 border border-slate-700 text-slate-100 text-sm rounded-xl px-4 py-3 focus:outline-none focus:border-violet-500 transition-all"
+                  />
+                </div>
+                <label className="flex items-start gap-2.5 cursor-pointer self-end pb-3">
+                  <input
+                    type="checkbox" className="w-4 h-4 mt-0.5 accent-violet-500"
+                    checked={!!taskTemplateFormData.auto_approve}
+                    onChange={e => setTaskTemplateFormData({...taskTemplateFormData, auto_approve: e.target.checked})}
+                  />
+                  <span className="text-xs text-slate-300 leading-snug">Без проверки менеджером<span className="block text-[11px] text-slate-500">закрывается сразу после сдачи</span></span>
+                </label>
+                <p className="col-span-full text-[11px] text-slate-500 -mt-2">
+                  SLA — через сколько часов после старта шаг нужно сдать. Трудозатраты — сколько часов работы он требует.
+                  Шаги идут по порядку; связи между шагами и параллельные ветки настраиваются в визуальном редакторе.
+                </p>
                 <div className="col-span-full">
                   <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Чек-лист (каждый пункт с новой строки)</label>
                   <textarea 
                     value={Array.isArray(taskTemplateFormData.checklist) ? taskTemplateFormData.checklist.join('\n') : ''}
-                    onChange={e => setTaskTemplateFormData({...taskTemplateFormData, checklist: e.target.value.split('\n').filter(l => l.trim()) })}
+                    onChange={e => setTaskTemplateFormData({...taskTemplateFormData, checklist: e.target.value.split('\n') })}
                     className="w-full bg-slate-800/50 border border-slate-700 text-slate-100 text-sm rounded-xl px-4 py-3 h-32 focus:outline-none focus:border-violet-500 transition-all font-mono"
                     placeholder="Пункт 1&#10;Пункт 2&#10;Пункт 3"
                   />
@@ -1108,7 +1188,7 @@ export default function Workflows() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs text-slate-400 mb-1.5">SLA (часов)</label>
+                  <label className="block text-xs text-slate-400 mb-1.5">Срок выполнения (SLA), ч</label>
                   <input
                     type="number" min={1} max={720}
                     value={newTaskSla}
@@ -1116,6 +1196,26 @@ export default function Workflows() {
                     className="w-full bg-slate-800 border border-slate-700 text-slate-200 text-sm rounded-lg px-3 py-2.5 focus:outline-none focus:border-violet-500"
                   />
                 </div>
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1.5">Дедлайн (календарная дата)</label>
+                <input
+                  type="date"
+                  value={newTaskDueDate}
+                  onChange={e => setNewTaskDueDate(e.target.value)}
+                  className="w-full bg-slate-800 border border-slate-700 text-slate-200 text-sm rounded-lg px-3 py-2.5 focus:outline-none focus:border-violet-500"
+                />
+                <p className="text-[10px] text-slate-500 mt-1">Хранится отдельно от SLA; если не указан, срок считается по SLA.</p>
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1.5">Трудозатраты, ч <span className="text-slate-600">(сколько реально работы — идёт в загрузку исполнителя)</span></label>
+                <input
+                  type="number" min={0} max={1000} step={0.5}
+                  value={newTaskHours || ''}
+                  placeholder="не оценено"
+                  onChange={e => setNewTaskHours(Number(e.target.value))}
+                  className="w-full bg-slate-800 border border-slate-700 text-slate-200 text-sm rounded-lg px-3 py-2.5 focus:outline-none focus:border-violet-500"
+                />
               </div>
               <div>
                 <label className="block text-xs text-slate-400 mb-1.5">Исполнитель</label>
@@ -1142,7 +1242,7 @@ export default function Workflows() {
                     <button 
                       type="button" 
                       onClick={async () => {
-                        await addMemberToProject(currentProject.id, Number(newTaskAssignee), 'DEVELOPER', 100);
+                        await addMemberToProject(currentProject.id, Number(newTaskAssignee), 'DEVELOPER', null);
                       }}
                       className="underline font-bold hover:text-amber-300 transition-colors"
                     >
@@ -1207,17 +1307,37 @@ export default function Workflows() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs text-slate-400 mb-1.5">SLA (часы)</label>
+                  <label className="block text-xs text-slate-400 mb-1.5">Срок выполнения (SLA), ч</label>
                   <input
                     type="number" required
                     value={editingTask.sla_hours}
-                    onChange={e => setEditingTask({ 
-                      ...editingTask, 
-                      sla_hours: e.target.value === '' ? '' : Number(e.target.value) 
+                    onChange={e => setEditingTask({
+                      ...editingTask,
+                      sla_hours: e.target.value === '' ? '' : Number(e.target.value)
                     })}
                     className="w-full bg-slate-800 border border-slate-700 text-slate-200 text-sm rounded-lg px-3 py-2.5"
                   />
                 </div>
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1.5">Дедлайн (календарная дата)</label>
+                <input
+                  type="date"
+                  value={editingTask.due_date || ''}
+                  onChange={e => setEditingTask({ ...editingTask, due_date: e.target.value })}
+                  className="w-full bg-slate-800 border border-slate-700 text-slate-200 text-sm rounded-lg px-3 py-2.5 focus:outline-none focus:border-violet-500"
+                />
+                <p className="text-[10px] text-slate-500 mt-1">Хранится отдельно от SLA; если не указан, срок считается по SLA.</p>
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1.5">Трудозатраты, ч <span className="text-slate-600">(идут в загрузку исполнителя)</span></label>
+                <input
+                  type="number" min={0} max={1000} step={0.5}
+                  value={editingTask.estimated_hours || ''}
+                  placeholder="не оценено"
+                  onChange={e => setEditingTask({ ...editingTask, estimated_hours: e.target.value === '' ? 0 : Number(e.target.value) })}
+                  className="w-full bg-slate-800 border border-slate-700 text-slate-200 text-sm rounded-lg px-3 py-2.5"
+                />
               </div>
               <div>
                 <label className="block text-xs text-slate-400 mb-1.5">Исполнитель</label>
@@ -1244,7 +1364,7 @@ export default function Workflows() {
                     <button 
                       type="button" 
                       onClick={async () => {
-                        await addMemberToProject(currentProject.id, Number(editingTask.assigned_to), 'DEVELOPER', 100);
+                        await addMemberToProject(currentProject.id, Number(editingTask.assigned_to), 'DEVELOPER', null);
                       }}
                       className="underline font-bold hover:text-amber-300 transition-colors"
                     >
@@ -1370,13 +1490,11 @@ export default function Workflows() {
                     <Upload size={12} /> Прикреплённые файлы
                   </h4>
                   <div className="grid grid-cols-1 gap-2">
-                    {reviewingTask.attachments.map((a: any) => (
-                      <a 
-                        key={a.id} 
-                        href={a.file.startsWith('http') ? a.file : `http://localhost:8000${a.file}`} 
-                        target="_blank" 
-                        rel="noreferrer"
-                        className="flex items-center justify-between p-3 bg-slate-800/30 border border-slate-800 rounded-xl hover:border-violet-500/50 hover:bg-violet-500/5 transition-all group"
+                    {reviewingTask.attachments.map((a: { id: number; original_name: string; download_url: string }) => (
+                      <button
+                        key={a.id} type="button"
+                        onClick={() => downloadFile(a.download_url, a.original_name).catch(() => toast.error('Не удалось скачать файл'))}
+                        className="w-full text-left flex items-center justify-between p-3 bg-slate-800/30 border border-slate-800 rounded-xl hover:border-violet-500/50 hover:bg-violet-500/5 transition-all group"
                       >
                         <div className="flex items-center gap-3">
                           <div className="w-8 h-8 rounded-lg bg-violet-500/10 flex items-center justify-center text-violet-400 group-hover:scale-110 transition-transform">
@@ -1384,32 +1502,59 @@ export default function Workflows() {
                           </div>
                           <div>
                             <p className="text-xs font-medium text-slate-300">{a.original_name}</p>
-                            <p className="text-[9px] text-slate-500">Нажмите, чтобы открыть</p>
+                            <p className="text-[9px] text-slate-500">Нажмите, чтобы скачать</p>
                           </div>
                         </div>
                         <Upload size={14} className="text-slate-600 group-hover:text-violet-400 transition-colors" />
-                      </a>
+                      </button>
                     ))}
                   </div>
                 </div>
               )}
             </div>
 
-            <div className="px-6 py-4 bg-slate-800/20 border-t border-slate-800 flex gap-3">
+            <div className="px-6 pt-4 bg-slate-800/20 border-t border-slate-800">
+              <label className="block text-[10px] text-slate-500 uppercase font-bold mb-1.5 tracking-widest">
+                Замечание (обязательно при возврате на доработку)
+              </label>
+              <textarea
+                value={reviewComment}
+                onChange={e => setReviewComment(e.target.value)}
+                rows={2}
+                placeholder="Что нужно исправить..."
+                className="w-full bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-xl px-3 py-2 focus:outline-none focus:border-violet-500 resize-none"
+              />
+            </div>
+            <div className="px-6 py-4 bg-slate-800/20 flex gap-3">
               <button
                 onClick={async () => {
-                  await updateTaskStatus(reviewingTask.id, 'IN_PROGRESS');
-                  setIsReviewModalOpen(false);
-                  toast.success("Задача возвращена в работу");
+                  if (!reviewComment.trim()) {
+                    toast.error('Напишите, что нужно доработать');
+                    return;
+                  }
+                  try {
+                    await rejectTask(reviewingTask.id, reviewComment.trim());
+                    setIsReviewModalOpen(false);
+                    setReviewComment('');
+                    toast.success("Задача возвращена на доработку");
+                  } catch (err: any) {
+                    toast.error(extractError(err, 'Не удалось вернуть задачу'));
+                  }
                 }}
                 className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl border border-slate-700 text-xs font-bold text-slate-400 hover:bg-slate-800 hover:text-white transition-all"
               >
-                <X size={14} /> Вернуть в работу
+                <X size={14} /> Вернуть на доработку
               </button>
               <button
                 onClick={async () => {
-                  await approveTask(reviewingTask.id);
+                  try {
+                    await approveTask(reviewingTask.id);
+                  } catch (err: any) {
+                    toast.error(extractError(err, 'Не удалось утвердить задачу'));
+                    return;
+                  }
                   setIsReviewModalOpen(false);
+                  setReviewComment('');
                   toast.success("Задача успешно утверждена");
                 }}
                 className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg shadow-emerald-900/20 transition-all"

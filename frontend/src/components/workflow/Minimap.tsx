@@ -12,8 +12,8 @@ export function CustomMinimap() {
       }}
       maskColor="rgba(0, 0, 0, 0.7)"
       style={{
-        backgroundColor: '#1e293b',
-        border: '1px solid #334155',
+        backgroundColor: 'var(--slate-800)',
+        border: '1px solid var(--slate-700)',
         borderRadius: '12px',
       }}
     />

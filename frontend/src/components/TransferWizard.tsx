@@ -1,8 +1,19 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { X, ArrowLeft, ArrowRight, Check, Package, Scaling, Calendar, ListChecks, Loader2 } from 'lucide-react';
+import { X, ArrowLeft, ArrowRight, Check, Package, Scaling, Calendar, Loader2, Info } from 'lucide-react';
 import { useAppContext, type PlanningBlock, type Project } from '../context/AppContext';
 import { toast } from 'react-hot-toast';
+import { projectPerms } from '../utils/roles';
+import { startOfToday, toDateKey } from '../utils/dates';
+
+/** Корневая задача этапа (с подзадачами) в том виде, в каком её отдаёт API */
+interface SourceTask {
+  id: number;
+  name: string;
+  duration_days: number;
+  estimated_hours: number;
+  subtasks?: SourceTask[];
+}
 
 interface TransferWizardProps {
   source: PlanningBlock | Project;
@@ -20,19 +31,29 @@ export default function TransferWizard({ source, isOpen, onClose, targetProjectI
   // Configuration
   const [targetProjectId, setTargetProjectId] = useState<number | ''>(initialTargetId || '');
   const [scalingFactor, setScalingFactor] = useState(1.0);
-  const [copyTeam, setCopyTeam] = useState(false);
-  const [copyDates, setCopyDates] = useState(true);
-  const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
+  const [startDateOverride, setStartDateOverride] = useState('');
 
-  const isTemplate = 'is_template' in source && (source as PlanningBlock).is_template;
   const sourceName = source.name;
-  const sourceTasks = (source as any).tasks || [];
+  // Корневые задачи этапа; подзадачи переносятся вместе с родителем
+  const sourceTasks: SourceTask[] = (source as PlanningBlock).tasks ?? [];
+  // Мастер создаётся заново при каждом открытии, поэтому начальный выбор — все задачи
+  const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>(() => sourceTasks.map(t => t.id));
 
-  useEffect(() => {
-    if (sourceTasks.length > 0) {
-      setSelectedTaskIds(sourceTasks.map((t: any) => t.id));
-    }
-  }, [sourceTasks]);
+  // Дата начала по умолчанию — начало целевого проекта, но не в прошлом; пользователь может изменить
+  const defaultStartDate = (() => {
+    const target = projects.find(p => p.id === Number(targetProjectId));
+    const today = toDateKey(startOfToday());
+    return target?.start_date && target.start_date > today ? target.start_date : today;
+  })();
+  const startDate = startDateOverride || defaultStartDate;
+
+  const countWithSubtasks = (task: SourceTask): number =>
+    1 + (task.subtasks ?? []).reduce((sum, t) => sum + countWithSubtasks(t), 0);
+  const sumHours = (task: SourceTask): number =>
+    (task.estimated_hours || 0) + (task.subtasks ?? []).reduce((sum, t) => sum + sumHours(t), 0);
+  const selectedRoots = sourceTasks.filter(t => selectedTaskIds.includes(t.id));
+  const totalTasks = selectedRoots.reduce((sum, t) => sum + countWithSubtasks(t), 0);
+  const totalHours = selectedRoots.reduce((sum, t) => sum + sumHours(t), 0) * scalingFactor;
 
   const handleFinish = async () => {
     if (!targetProjectId) {
@@ -45,7 +66,10 @@ export default function TransferWizard({ source, isOpen, onClose, targetProjectI
       const target = projects.find(p => p.id === Number(targetProjectId));
       if (!target) return;
 
-      const startDate = target.start_date || new Date().toISOString().split('T')[0];
+      if (!startDate) {
+        toast.error('Укажите дату начала этапа');
+        return;
+      }
 
       await transferBlock(
         source.id,
@@ -58,8 +82,8 @@ export default function TransferWizard({ source, isOpen, onClose, targetProjectI
       toast.success(`Этап «${sourceName}» перенесен в проект «${target.name}»`);
       onClose();
       navigate('/projects');
-    } catch (err) {
-      // Toast handled in context
+    } catch {
+      // Ошибку уже показал transferBlock
     } finally {
       setSubmitting(false);
     }
@@ -119,7 +143,7 @@ export default function TransferWizard({ source, isOpen, onClose, targetProjectI
               </div>
 
               <div className="grid grid-cols-1 gap-3">
-                {projects.filter(p => p.status !== 'COMPLETED' && p.status !== 'CANCELLED').map(p => (
+                {projects.filter(p => p.status !== 'COMPLETED' && p.status !== 'CANCELLED' && projectPerms(p).can_edit_tasks).map(p => (
                   <button
                     key={p.id}
                     onClick={() => setTargetProjectId(p.id)}
@@ -171,50 +195,23 @@ export default function TransferWizard({ source, isOpen, onClose, targetProjectI
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-3">
-                    <label className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-wider">
-                      <Calendar size={14} className="text-violet-400" />
-                      Сроки
-                    </label>
-                    <button 
-                      onClick={() => setCopyDates(!copyDates)}
-                      className={`w-full flex items-center justify-between p-4 rounded-2xl border transition-all ${
-                        copyDates ? 'bg-violet-500/10 border-violet-500/30' : 'bg-slate-800/30 border-slate-800 text-slate-500'
-                      }`}
-                    >
-                      <span className="text-xs font-medium">Копировать даты</span>
-                      <div className={`w-8 h-4 rounded-full transition-colors relative ${copyDates ? 'bg-violet-600' : 'bg-slate-700'}`}>
-                        <div className={`absolute top-1 w-2 h-2 bg-white rounded-full transition-all ${copyDates ? 'right-1' : 'left-1'}`} />
-                      </div>
-                    </button>
-                  </div>
-
-                  {!isTemplate && (
-                    <div className="space-y-3">
-                      <label className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-wider">
-                        <ListChecks size={14} className="text-violet-400" />
-                        Ресурсы
-                      </label>
-                      <button 
-                        onClick={() => setCopyTeam(!copyTeam)}
-                        className={`w-full flex items-center justify-between p-4 rounded-2xl border transition-all ${
-                          copyTeam ? 'bg-violet-500/10 border-violet-500/30' : 'bg-slate-800/30 border-slate-800 text-slate-500'
-                        }`}
-                      >
-                        <span className="text-xs font-medium">Копировать команду</span>
-                        <div className={`w-8 h-4 rounded-full transition-colors relative ${copyTeam ? 'bg-violet-600' : 'bg-slate-700'}`}>
-                          <div className={`absolute top-1 w-2 h-2 bg-white rounded-full transition-all ${copyTeam ? 'right-1' : 'left-1'}`} />
-                        </div>
-                      </button>
-                    </div>
-                  )}
+                <div className="space-y-3">
+                  <label className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-wider">
+                    <Calendar size={14} className="text-violet-400" />
+                    Дата начала этапа
+                  </label>
+                  <input
+                    type="date" value={startDate} onChange={e => setStartDateOverride(e.target.value)}
+                    className="w-full bg-slate-800/40 border border-slate-800 rounded-2xl px-4 py-3 text-sm text-slate-200 focus:outline-none focus:border-violet-500"
+                  />
+                  <p className="text-[11px] text-slate-500">От этой даты считаются сроки всех задач этапа по рабочему календарю проекта.</p>
                 </div>
               </div>
 
               <div className="p-4 bg-amber-500/5 border border-amber-500/20 rounded-2xl">
-                <p className="text-[11px] text-amber-400/80 leading-relaxed italic">
-                  * Система автоматически пересчитает даты задач с учетом рабочего календаря целевого проекта (исключая выходные и праздники).
+                <p className="text-[11px] text-amber-400/80 leading-relaxed flex items-start gap-2">
+                  <Info size={13} className="flex-shrink-0 mt-0.5" />
+                  Коэффициент меняет длительность и трудозатраты каждой задачи. Даты пересчитываются по рабочему календарю целевого проекта (без выходных и праздников). Исполнители не копируются — назначайте их уже в проекте.
                 </p>
               </div>
             </div>
@@ -225,7 +222,7 @@ export default function TransferWizard({ source, isOpen, onClose, targetProjectI
               <div className="flex items-center justify-between mb-2">
                 <h3 className="text-sm font-bold text-white uppercase tracking-wider">Выбор задач ({selectedTaskIds.length})</h3>
                 <button 
-                  onClick={() => setSelectedTaskIds(selectedTaskIds.length === sourceTasks.length ? [] : sourceTasks.map((t: any) => t.id))}
+                  onClick={() => setSelectedTaskIds(selectedTaskIds.length === sourceTasks.length ? [] : sourceTasks.map((t: SourceTask) => t.id))}
                   className="text-[10px] font-bold text-violet-400 uppercase hover:text-violet-300"
                 >
                   {selectedTaskIds.length === sourceTasks.length ? 'Снять все' : 'Выбрать все'}
@@ -233,30 +230,47 @@ export default function TransferWizard({ source, isOpen, onClose, targetProjectI
               </div>
 
               <div className="space-y-2">
-                {sourceTasks.length > 0 ? sourceTasks.map((task: any) => (
-                  <div 
-                    key={task.id}
-                    onClick={() => setSelectedTaskIds(prev => prev.includes(task.id) ? prev.filter(id => id !== task.id) : [...prev, task.id])}
-                    className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
-                      selectedTaskIds.includes(task.id) 
-                        ? 'bg-slate-800/50 border-violet-500/30' 
-                        : 'bg-slate-900 border-slate-800/50 opacity-60 grayscale'
-                    }`}
-                  >
-                    <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${
-                      selectedTaskIds.includes(task.id) ? 'bg-violet-600 border-violet-600' : 'border-slate-700'
-                    }`}>
-                      {selectedTaskIds.includes(task.id) && <Check size={12} className="text-white" />}
+                {sourceTasks.length > 0 ? sourceTasks.map((task: SourceTask) => {
+                  const checked = selectedTaskIds.includes(task.id);
+                  const subtasks = task.subtasks ?? [];
+                  return (
+                    <div key={task.id}>
+                      <div
+                        onClick={() => setSelectedTaskIds(prev => prev.includes(task.id) ? prev.filter(id => id !== task.id) : [...prev, task.id])}
+                        className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                          checked ? 'bg-slate-800/50 border-violet-500/30' : 'bg-slate-900 border-slate-800/50 opacity-60 grayscale'
+                        }`}
+                      >
+                        <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors flex-shrink-0 ${
+                          checked ? 'bg-violet-600 border-violet-600' : 'border-slate-700'
+                        }`}>
+                          {checked && <Check size={12} className="text-white" />}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-slate-200">{task.name}</p>
+                          <p className="text-[10px] text-slate-500">
+                            {Math.max(1, Math.round(task.duration_days * scalingFactor))} дн. · {task.estimated_hours > 0 ? `${Math.round(task.estimated_hours * scalingFactor * 10) / 10} ч` : 'трудозатраты не оценены'}
+                            {subtasks.length > 0 && ` · подзадач: ${subtasks.length}`}
+                          </p>
+                        </div>
+                      </div>
+                      {checked && subtasks.map((sub: SourceTask) => (
+                        <p key={sub.id} className="ml-11 mt-1 text-[11px] text-slate-500">↳ {sub.name}</p>
+                      ))}
                     </div>
-                    <div>
-                      <p className="text-xs font-bold text-slate-200">{task.name}</p>
-                      <p className="text-[10px] text-slate-500">{task.task_type} • {task.estimated_hours} ч.</p>
-                    </div>
-                  </div>
-                )) : (
+                  );
+                }) : (
                   <p className="text-center py-8 text-slate-500 text-sm">В этом этапе нет вложенных задач</p>
                 )}
               </div>
+
+              {sourceTasks.length > 0 && (
+                <p className="text-xs text-slate-400 pt-2 border-t border-slate-800">
+                  Будет создано задач: <b className="text-slate-200">{totalTasks}</b>
+                  {totalHours > 0 && <> · трудозатраты ≈ <b className="text-slate-200">{Math.round(totalHours * 10) / 10} ч</b></>}
+                  {' · '}масштаб <b className="text-slate-200">{scalingFactor}×</b>
+                </p>
+              )}
             </div>
           )}
         </div>

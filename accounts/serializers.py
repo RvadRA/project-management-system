@@ -33,6 +33,12 @@ class UserSerializer(serializers.ModelSerializer):
             for name in ('role', 'is_active', 'username'):
                 self.fields[name].read_only = True
 
+    def validate_avatar(self, value):
+        # ImageField уже проверяет, что это картинка; ограничиваем размер
+        if value is not None and value.size > 2 * 1024 * 1024:
+            raise serializers.ValidationError('Аватар — не больше 2 МБ.')
+        return value
+
     def get_full_name(self, obj):
         return obj.get_full_name() or obj.username
 
@@ -116,7 +122,8 @@ class UserCreateSerializer(serializers.ModelSerializer):
 
         if telegram_chat_id:
             from matching.models import EmployeeProfile
-            EmployeeProfile.objects.create(user=user, telegram_chat_id=telegram_chat_id)
+            # Профиль мог быть создан сигналом при сохранении пользователя
+            EmployeeProfile.objects.update_or_create(user=user, defaults={'telegram_chat_id': telegram_chat_id})
             
         return user
 

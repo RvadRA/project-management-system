@@ -22,8 +22,21 @@ User = get_user_model()
 class Command(BaseCommand):
     help = 'Seed the database with demo data for the Project Management System'
 
+    def add_arguments(self, parser):
+        parser.add_argument('--allow-demo-passwords', action='store_true',
+                            help='Разрешить демо-пароли вне режима отладки (не для боевого сервера)')
+
     def handle(self, *args, **options):
+        from django.conf import settings
+        from django.core.management.base import CommandError
+        # Демо-пользователи создаются с общеизвестными паролями (admin123 / password123)
+        if not settings.DEBUG and not options['allow_demo_passwords']:
+            raise CommandError(
+                'seed_data создаёт учётные записи с общеизвестными паролями и предназначена только для '
+                'разработки (DJANGO_DEBUG=True). На боевом сервере используйте createsuperuser.')
         self.stdout.write(self.style.MIGRATE_HEADING('[SEED] Seeding demo data...'))
+        self.stdout.write(self.style.WARNING(
+            'Демо-пароли общеизвестны. Перед открытием доступа выполните: python manage.py audit_accounts --fix'))
 
         self._create_users()
         self._create_skills()

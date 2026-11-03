@@ -1,28 +1,29 @@
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
-import Dashboard from './pages/Dashboard';
-import Projects from './pages/Projects';
-import Team from './pages/Team';
-import Matching from './pages/Matching';
-import Workflows from './pages/Workflows';
-import MyWorkspace from './pages/MyWorkspace';
-import Analytics from './pages/Analytics';
-import Settings from './pages/Settings';
-import Profile from './pages/Profile';
-import Audit from './pages/Audit';
-import PlanningCatalog from './pages/PlanningCatalog';
-import Calendar from './pages/Calendar';
-import WorkflowEditor from './pages/WorkflowEditor';
-import KnowledgeBase from './pages/KnowledgeBase';
 import { NotFoundPage, ForbiddenPage, ServerErrorPage } from './components/ErrorPages';
-import Login from './pages/Login';
 import ProtectedRoute from './components/ProtectedRoute';
 import { AppProvider } from './context/AppContext';
 import { AuthProvider } from './context/AuthContext';
 import { useAuth } from './context/AuthContext';
 import { Toaster } from 'react-hot-toast';
 import { STAFF_ROLES } from './utils/roles';
+
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Projects = lazy(() => import('./pages/Projects'));
+const Team = lazy(() => import('./pages/Team'));
+const Matching = lazy(() => import('./pages/Matching'));
+const Workflows = lazy(() => import('./pages/Workflows'));
+const MyWorkspace = lazy(() => import('./pages/MyWorkspace'));
+const Analytics = lazy(() => import('./pages/Analytics'));
+const Settings = lazy(() => import('./pages/Settings'));
+const Profile = lazy(() => import('./pages/Profile'));
+const Audit = lazy(() => import('./pages/Audit'));
+const PlanningCatalog = lazy(() => import('./pages/PlanningCatalog'));
+const Calendar = lazy(() => import('./pages/Calendar'));
+const WorkflowEditor = lazy(() => import('./pages/WorkflowEditor'));
+const KnowledgeBase = lazy(() => import('./pages/KnowledgeBase'));
+const Login = lazy(() => import('./pages/Login'));
 
 /** Block a route if user doesn't have the required role */
 function RoleRoute({
@@ -43,14 +44,15 @@ function RoleRoute({
 function AppRoutes() {
   return (
     <Routes>
-      <Route path="/login" element={<Login />} />
+      <Route path="/login" element={<Suspense fallback={<PageLoading />}><Login /></Suspense>} />
 
       <Route
         path="/*"
         element={
           <ProtectedRoute>
             <Layout>
-              <Routes>
+              <Suspense fallback={<PageLoading />}>
+                <Routes>
                 {/* Everyone */}
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/workspace" element={<MyWorkspace />} />
@@ -137,12 +139,21 @@ function AppRoutes() {
                 <Route path="/403" element={<ForbiddenPage />} />
                 <Route path="/500" element={<ServerErrorPage />} />
                 <Route path="*" element={<NotFoundPage />} />
-              </Routes>
+                </Routes>
+              </Suspense>
             </Layout>
           </ProtectedRoute>
         }
       />
     </Routes>
+  );
+}
+
+function PageLoading() {
+  return (
+    <div className="flex min-h-40 items-center justify-center text-sm text-slate-400" role="status">
+      Загрузка раздела…
+    </div>
   );
 }
 
@@ -160,7 +171,7 @@ function App() {
     <AuthProvider>
       <AppProvider>
         <Router>
-          <Toaster position="top-right" toastOptions={{ duration: 3000, style: { background: '#0f172a', color: '#fff', border: '1px solid #1e293b' } }} />
+          <Toaster position="top-right" toastOptions={{ duration: 3000, style: { background: 'var(--slate-900)', color: 'var(--slate-100)', border: '1px solid var(--slate-700)' } }} />
           <AppRoutes />
         </Router>
       </AppProvider>

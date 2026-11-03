@@ -15,22 +15,46 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// Использованный refresh-токен сервер сразу аннулирует, поэтому обновление должно идти
+// одним запросом: все параллельные запросы, получившие 401, ждут один и тот же результат.
+let refreshInFlight: Promise<string> | null = null;
+
+const refreshAccessToken = (): Promise<string> => {
+  if (!refreshInFlight) {
+    refreshInFlight = axios
+      .post(`${API_BASE_URL}/auth/token/refresh/`, { refresh: localStorage.getItem('refresh_token') })
+      .then((response) => {
+        const { access, refresh } = response.data;
+        localStorage.setItem('access_token', access);
+        if (refresh) localStorage.setItem('refresh_token', refresh);
+        return access as string;
+      })
+      .finally(() => { refreshInFlight = null; });
+  }
+  return refreshInFlight;
+};
+
+/** Выход: сервер аннулирует refresh-токен, чтобы им нельзя было воспользоваться после выхода. */
+export async function serverLogout(): Promise<void> {
+  const refresh = localStorage.getItem('refresh_token');
+  if (!refresh || !localStorage.getItem('access_token')) return;
+  try {
+    await api.post('/auth/logout/', { refresh });
+  } catch {
+    // сеть недоступна или токен уже истёк — локальный выход всё равно выполняется
+  }
+}
+
 // Response interceptor for refresh token
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
-    const refreshToken = localStorage.getItem('refresh_token');
-    if (error.response?.status === 401 && originalRequest && !originalRequest._retry && refreshToken) {
+    const isLogout = String(originalRequest?.url || '').includes('/auth/logout/');
+    if (error.response?.status === 401 && originalRequest && !originalRequest._retry && !isLogout && localStorage.getItem('refresh_token')) {
       originalRequest._retry = true;
       try {
-        const response = await axios.post(`${API_BASE_URL}/auth/token/refresh/`, {
-          refresh: refreshToken,
-        });
-        const { access, refresh } = response.data;
-        localStorage.setItem('access_token', access);
-        // ROTATE_REFRESH_TOKENS=True: сервер выдаёт новый refresh-токен вместе с access
-        if (refresh) localStorage.setItem('refresh_token', refresh);
+        const access = await refreshAccessToken();
         originalRequest.headers.Authorization = `Bearer ${access}`;
         return api(originalRequest);
       } catch (refreshError) {

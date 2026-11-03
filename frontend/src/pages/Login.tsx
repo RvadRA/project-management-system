@@ -29,6 +29,8 @@ export default function Login() {
     } catch (err: any) {
       if (err.response?.status === 401) {
         setError('Неверное имя пользователя или пароль');
+      } else if (err.response?.status === 429) {
+        setError('Слишком много попыток входа. Подождите минуту и попробуйте снова.');
       } else {
         setError('Ошибка при подключении к серверу');
       }

@@ -1,0 +1,208 @@
+{
+  "methods": {
+    "direct_llm": {
+      "by_scenario": {
+        "ambiguous_competition": {
+          "balance": {
+            "assigned_employees": 2,
+            "assigned_hours_cv": 0.8182,
+            "max_assigned_hours": 80.0,
+            "min_assigned_hours": 8.0,
+            "zero_assignment_share": 0.9333
+          },
+          "candidate_coverage": 0.1667,
+          "error_rate": 0.0,
+          "errors": 0,
+          "excluded_candidates_mean": 25.0,
+          "explanation_checked": 2,
+          "explanation_factuality_pass_rate": 1.0,
+          "explanation_present_rate": 1.0,
+          "false_exclusion_rate": 0.0,
+          "latency_p50_ms": 7594.48,
+          "latency_p95_ms": 7616.47,
+          "mrr": 0.2,
+          "ndcg3": 0.0,
+          "no_target_tasks": 0,
+          "target_tasks": 2,
+          "task_coverage": 1.0,
+          "tasks": 2,
+          "top1": 0.0,
+          "top3": 0.0
+        },
+        "high_load": {
+          "balance": {
+            "assigned_employees": 1,
+            "assigned_hours_cv": 0.0,
+            "max_assigned_hours": 20.0,
+            "min_assigned_hours": 20.0,
+            "zero_assignment_share": 0.9667
+          },
+          "candidate_coverage": 0.1,
+          "error_rate": 0.0,
+          "errors": 0,
+          "excluded_candidates_mean": 27.0,
+          "explanation_checked": 1,
+          "explanation_factuality_pass_rate": 1.0,
+          "explanation_present_rate": 1.0,
+          "false_exclusion_rate": 0.0,
+          "latency_p50_ms": 5285.95,
+          "latency_p95_ms": 5285.95,
+          "mrr": 0.5,
+          "ndcg3": 0.6309,
+          "no_target_tasks": 0,
+          "target_tasks": 1,
+          "task_coverage": 1.0,
+          "tasks": 1,
+          "top1": 0.0,
+          "top3": 1.0
+        },
+        "incomplete_data": {
+          "balance": {
+            "assigned_employees": 5,
+            "assigned_hours_cv": 0.6876,
+            "max_assigned_hours": 80.0,
+            "min_assigned_hours": 4.0,
+            "zero_assignment_share": 0.8333
+          },
+          "candidate_coverage": 0.15,
+          "error_rate": 0.0,
+          "errors": 0,
+          "excluded_candidates_mean": 25.5,
+          "explanation_checked": 6,
+          "explanation_factuality_pass_rate": 1.0,
+          "explanation_present_rate": 1.0,
+          "false_exclusion_rate": 0.0,
+          "latency_p50_ms": 5745.91,
+          "latency_p95_ms": 6894.69,
+          "mrr": 0.5278,
+          "ndcg3": 0.6488,
+          "no_target_tasks": 0,
+          "target_tasks": 6,
+          "task_coverage": 1.0,
+          "tasks": 6,
+          "top1": 0.1667,
+          "top3": 1.0
+        },
+        "missing_skills": {
+          "balance": {
+            "assigned_employees": 3,
+            "assigned_hours_cv": 1.0273,
+            "max_assigned_hours": 80.0,
+            "min_assigned_hours": 6.0,
+            "zero_assignment_share": 0.9
+          },
+          "candidate_coverage": 0.1556,
+          "error_rate": 0.0,
+          "errors": 0,
+          "excluded_candidates_mean": 25.3333,
+          "explanation_checked": 3,
+          "explanation_factuality_pass_rate": 1.0,
+          "explanation_present_rate": 1.0,
+          "false_exclusion_rate": 0.0,
+          "latency_p50_ms": 6873.9,
+          "latency_p95_ms": 6954.1,
+          "mrr": 0.75,
+          "ndcg3": 0.6667,
+          "no_target_tasks": 0,
+          "target_tasks": 3,
+          "task_coverage": 1.0,
+          "tasks": 3,
+          "top1": 0.6667,
+          "top3": 0.6667
+        },
+        "no_suitable_candidate": {
+          "balance": {
+            "assigned_employees": 0,
+            "assigned_hours_cv": 0.0,
+            "max_assigned_hours": 0.0,
+            "min_assigned_hours": 0.0,
+            "zero_assignment_share": 1.0
+          },
+          "candidate_coverage": 0.0,
+          "error_rate": 0.0,
+          "errors": 0,
+          "excluded_candidates_mean": 30.0,
+          "explanation_checked": 0,
+          "explanation_factuality_pass_rate": null,
+          "explanation_present_rate": 0.0,
+          "false_exclusion_rate": 0.0,
+          "latency_p50_ms": 2.1,
+          "latency_p95_ms": 2.59,
+          "mrr": 0.0,
+          "ndcg3": 0.0,
+          "no_target_tasks": 2,
+          "target_tasks": 0,
+          "task_coverage": 0.0,
+          "tasks": 2,
+          "top1": 0.0,
+          "top3": 0.0
+        },
+        "standard": {
+          "balance": {
+            "assigned_employees": 11,
+            "assigned_hours_cv": 1.0634,
+            "max_assigned_hours": 152.0,
+            "min_assigned_hours": 6.0,
+            "zero_assignment_share": 0.6333
+          },
+          "candidate_coverage": 0.15,
+          "error_rate": 0.0,
+          "errors": 0,
+          "excluded_candidates_mean": 25.5,
+          "explanation_checked": 16,
+          "explanation_factuality_pass_rate": 0.9375,
+          "explanation_present_rate": 1.0,
+          "false_exclusion_rate": 0.0,
+          "latency_p50_ms": 6340.55,
+          "latency_p95_ms": 8407.76,
+          "mrr": 0.6531,
+          "ndcg3": 0.6332,
+          "no_target_tasks": 0,
+          "target_tasks": 16,
+          "task_coverage": 1.0,
+          "tasks": 16,
+          "top1": 0.5,
+          "top3": 0.75
+        }
+      },
+      "overall": {
+        "balance": {
+          "assigned_employees": 16,
+          "assigned_hours_cv": 0.786,
+          "max_assigned_hours": 158.0,
+          "min_assigned_hours": 6.0,
+          "zero_assignment_share": 0.4667
+        },
+        "candidate_coverage": 0.14,
+        "error_rate": 0.0,
+        "errors": 0,
+        "excluded_candidates_mean": 25.8,
+        "explanation_checked": 28,
+        "explanation_factuality_pass_rate": 0.9643,
+        "explanation_present_rate": 1.0,
+        "false_exclusion_rate": 0.0,
+        "latency_p50_ms": 6123.73,
+        "latency_p95_ms": 8050.11,
+        "mrr": 0.5988,
+        "ndcg3": 0.5948,
+        "no_target_tasks": 2,
+        "target_tasks": 28,
+        "task_coverage": 0.9333,
+        "tasks": 30,
+        "top1": 0.3929,
+        "top1_agreement_with_rule": 0.0,
+        "top1_changed_vs_rule": 0,
+        "top3": 0.75
+      }
+    }
+  },
+  "pairwise_top1_agreement": {
+    "direct_llm": {
+      "agreement": 0.0,
+      "compared_tasks": 0,
+      "same_top1_as_rule": 0
+    }
+  },
+  "run_id": "synthetic_direct_llm30_qwen3_4b",
+  "synthetic": true
+}

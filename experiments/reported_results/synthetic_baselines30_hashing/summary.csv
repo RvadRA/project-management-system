@@ -1,0 +1,6 @@
+run_id,method,tasks,target_tasks,no_target_tasks,top1,top3,mrr,ndcg3,false_exclusion_rate,candidate_coverage,task_coverage,excluded_candidates_mean,explanation_present_rate,explanation_factuality_pass_rate,explanation_checked,latency_p50_ms,latency_p95_ms,errors,error_rate,assigned_hours_cv,zero_assignment_share,max_assigned_hours,min_assigned_hours,top1_changed_vs_rule
+synthetic_baselines30_hashing,embedding,30,28,2,0.3214,0.7857,0.5696,0.5863,0.0,0.14,0.9333,25.8,1.0,1.0,28,2.46,4.57,0,0.0,0.7184,0.4667,158.0,8.0,10
+synthetic_baselines30_hashing,hybrid,30,28,2,0.4286,0.8929,0.6482,0.6934,0.0,0.14,0.9333,25.8,1.0,1.0,28,2.19,2.62,0,0.0,0.8123,0.5333,152.0,6.0,2
+synthetic_baselines30_hashing,popularity,30,28,2,0.1786,0.6071,0.4464,0.4209,0.0,0.14,0.9333,25.8,0.0,,0,1.9,2.49,0,0.0,0.2255,0.8667,302.0,178.0,23
+synthetic_baselines30_hashing,random,30,28,2,0.1429,0.5,0.4071,0.3448,0.0,0.14,0.9333,25.8,0.0,,0,1.88,2.18,0,0.0,0.6983,0.4333,140.0,6.0,22
+synthetic_baselines30_hashing,rule,30,28,2,0.4643,0.8929,0.672,0.7113,0.0,0.14,0.9333,25.8,1.0,1.0,28,1.81,2.24,0,0.0,0.824,0.5333,152.0,6.0,0

@@ -1,160 +1,163 @@
-from django.db.models import Avg, Sum
-from .models import EmployeeProfile, EmployeeSkill, ProjectParticipation
-from workflows.models import WorkflowTask
-from django.contrib.auth import get_user_model
 import datetime
 
-User = get_user_model()
+from django.db.models import F, Value
+from django.db.models.functions import Greatest
+
+from .models import EmployeeProfile, ProjectParticipation, WorkloadEntry
+from .scoring import rank_for_task
+
 
 class RecommendationService:
-    # Конфигурируемые веса
-    WEIGHTS = {
-        "competence": 0.3,
-        "experience": 0.2,
-        "availability": 0.2,
-        "performance": 0.2,
-        "cost": 0.1,
+    """Подбор исполнителя на задачу процесса. Считает тем же движком, что и общий подбор."""
+
+    @classmethod
+    def recommend_for_task(cls, task_id, weights=None):
+        from workflows.models import WorkflowTask
+        task = WorkflowTask.objects.select_related(
+            'workflow__project', 'linked_wbs_task',
+        ).get(id=task_id)
+        return rank_for_task(task, weights=weights)
+
+
+def ensure_profile(user):
+    """У каждого сотрудника должен быть профиль — без него он не попадает в подбор и в раздел «Команда»."""
+    profile, _ = EmployeeProfile.objects.get_or_create(user=user, defaults={'domain': user.domain or ''})
+    return profile
+
+
+def sync_project_participations(project):
+    """
+    Фиксирует участие команды в завершённом проекте (история для подбора и профиля сотрудника).
+    Оценку результативности (performance_score) не выставляет — её ставит руководитель;
+    фактическая результативность считается движком подбора по задачам.
+    """
+    if project.status != 'COMPLETED':
+        return 0
+    created = 0
+    # Участие заканчивается в день завершения проекта; загрузка по нему больше не занимает сотрудников
+    left_at = datetime.date.today()
+    WorkloadEntry.objects.filter(project=project, end_date__gt=left_at).update(
+        end_date=Greatest(Value(left_at), F('start_date'))
+    )
+    for member in project.members.select_related('user', 'role_ref'):
+        profile = ensure_profile(member.user)
+        role = 'Менеджер проекта' if member.is_manager else (member.role_ref.name if member.role_ref else member.role)
+        _, was_created = ProjectParticipation.objects.get_or_create(
+            employee=profile, project=project,
+            defaults={'role': role[:100], 'joined_at': member.joined_at, 'left_at': left_at},
+        )
+        created += was_created
+    return created
+
+
+def project_contribution(profile, project):
+    """
+    Вклад сотрудника в проект: его задачи (процессы и план), как они выполнены относительно срока,
+    и оценка руководителя. Сроки классифицируются тем же правилом, что и «Результативность» в подборе.
+    """
+    from django.utils import timezone
+    from projects.models import ProjectMember, Task
+    from workflows.models import WorkflowTask
+    from .scoring import task_timeliness
+
+    user = profile.user
+    now = timezone.now()
+    today = now.date()
+    tasks = []
+    summary = {
+        'total': 0, 'done': 0, 'on_time': 0, 'late': 0, 'overdue': 0, 'review': 0, 'open': 0, 'done_plan': 0,
+        'estimated_hours': 0.0, 'done_hours': 0.0,
     }
 
-    @classmethod
-    def recommend_for_task(cls, task_id):
-        """
-        Возвращает список сотрудников с оценкой (score) и расшифровкой факторов.
-        """
-        task = WorkflowTask.objects.select_related('workflow__project').get(id=task_id)
-        profiles = EmployeeProfile.objects.select_related('user').prefetch_related(
-            'employee_skills__skill', 'participations', 'workload_entries'
-        ).all()
-        
-        results = []
-        for profile in profiles:
-            score_data = cls._calculate_score(profile, task)
-            results.append({
-                'employee_id': profile.user.id,
-                'full_name': profile.user.get_full_name() or profile.user.username,
-                'total_score': round(score_data['total'], 2),
-                'breakdown': score_data['breakdown']
-            })
-            
-        # Сортируем по убыванию общего балла
-        results.sort(key=lambda x: x['total_score'], reverse=True)
-        return results
+    def add(row, kind):
+        tasks.append(row)
+        summary['total'] += 1
+        summary[kind] += 1
+        hours = row['estimated_hours'] or 0
+        summary['estimated_hours'] += hours
+        if row['status'] == 'DONE':
+            summary['done'] += 1
+            summary['done_hours'] += hours
 
-    @classmethod
-    def _calculate_score(cls, profile, task):
-        # 1. Competence Fit (0.0 - 1.0)
-        competence = cls._calc_competence(profile, task)
-        
-        # 2. Experience Similarity (0.0 - 1.0)
-        experience = cls._calc_experience(profile, task)
-        
-        # 3. Availability (0.0 - 1.0)
-        availability = cls._calc_availability(profile)
-        
-        # 4. Past Performance (0.0 - 1.0)
-        performance = cls._calc_performance(profile)
-        
-        # 5. Cost Fit (0.0 - 1.0)
-        cost = cls._calc_cost_fit(profile, task)
-        
-        total = (
-            competence * cls.WEIGHTS['competence'] +
-            experience * cls.WEIGHTS['experience'] +
-            availability * cls.WEIGHTS['availability'] +
-            performance * cls.WEIGHTS['performance'] +
-            cost * cls.WEIGHTS['cost']
+    process_tasks = (
+        WorkflowTask.objects.filter(assigned_to=user, workflow__project=project)
+        .select_related('workflow', 'report').order_by('workflow_id', 'order', 'id')
+    )
+    linked_plan_ids = set()
+    for task in process_tasks:
+        report = getattr(task, 'report', None)
+        submitted_at = report.submitted_at if report else None
+        kind = task_timeliness(task.status, task.due_date, task.completed_at, submitted_at, now)
+        finished = min(filter(None, [task.completed_at, submitted_at]), default=None)
+        if task.linked_wbs_task_id:
+            linked_plan_ids.add(task.linked_wbs_task_id)
+        add({
+            'id': f'p{task.id}', 'source': 'process', 'name': task.name, 'group': task.workflow.name,
+            'status': task.status, 'timeliness': kind,
+            'due': task.due_date, 'finished': finished if task.status in ('DONE', 'REVIEW') else None,
+            'late_hours': round((finished - task.due_date).total_seconds() / 3600, 1) if kind == 'late' else None,
+            'estimated_hours': task.estimated_hours or 0,
+        }, kind)
+
+    # Задачи плана (WBS), которые не ведутся через процесс — иначе они посчитались бы дважды
+    plan_tasks = (
+        Task.objects.filter(assigned_to=user, block__project=project, workflow_task__isnull=True)
+        .exclude(id__in=linked_plan_ids).select_related('block').order_by('block_id', 'order', 'id')
+    )
+    for task in plan_tasks:
+        # У задач плана нет отметки времени выполнения: «в срок / с опозданием» для них не определяется,
+        # поэтому выполненные показываем как «done» и в долю «в срок» не включаем
+        if task.status == 'DONE':
+            kind = 'done_plan'
+        elif task.status == 'REVIEW':
+            kind = 'review'
+        else:
+            kind = 'overdue' if task.end_date and task.end_date < today else 'open'
+        add({
+            'id': f'w{task.id}', 'source': 'plan', 'name': task.name, 'group': task.block.name,
+            'status': task.status, 'timeliness': 'done' if task.status == 'DONE' else kind,
+            'due': task.end_date, 'finished': None, 'late_hours': None,
+            'estimated_hours': task.estimated_hours or 0,
+        }, kind)
+
+    judged = summary['on_time'] + summary['late'] + summary['overdue']
+    summary['on_time_rate'] = round(summary['on_time'] / judged * 100) if judged else None
+    summary['estimated_hours'] = round(summary['estimated_hours'], 1)
+    summary['done_hours'] = round(summary['done_hours'], 1)
+
+    member = ProjectMember.objects.filter(project=project, user=user).select_related('role_ref').first()
+    participation = (
+        ProjectParticipation.objects.filter(project=project, employee=profile).select_related('rated_by').first()
+    )
+    if member:
+        position = 'Менеджер проекта' if member.is_manager else (
+            member.role_ref.name if member.role_ref else member.get_role_display()
         )
-        
-        return {
-            'total': total,
-            'breakdown': {
-                'competence': round(competence, 2),
-                'experience': round(experience, 2),
-                'availability': round(availability, 2),
-                'performance': round(performance, 2),
-                'cost': round(cost, 2),
-            }
+    else:
+        position = participation.role if participation else ''
+
+    entry = WorkloadEntry.objects.filter(employee=profile, project=project).order_by('-end_date').first()
+    rating = None
+    if participation and participation.performance_score > 0:
+        rated_by = participation.rated_by
+        rating = {
+            'stars': round(participation.performance_score * 5, 1),
+            'comment': participation.comment,
+            'rated_by': (rated_by.get_full_name() or rated_by.username) if rated_by else None,
+            'rated_at': participation.rated_at,
         }
-
-    @staticmethod
-    def _calc_competence(profile, task):
-        # Если у задачи нет шаблона, сложно определить требования. Пока возвращаем 0.5
-        if not task.task_template:
-            return 0.5
-        
-        # Здесь в идеале должны быть требуемые навыки в TaskTemplate
-        # Для демонстрации: проверяем пересечение слов в названии задачи и названии навыков
-        emp_skills = set(s.skill.name.lower() for s in profile.employee_skills.all())
-        task_keywords = set(task.name.lower().split())
-        
-        matches = emp_skills.intersection(task_keywords)
-        if not task_keywords: return 0.5
-        return min(1.0, (len(matches) + 1) / (len(task_keywords) + 1))
-
-    @staticmethod
-    def _calc_experience(profile, task):
-        # Опыт через профиль + история завершенных задач
-        project = task.workflow.project
-        domain = (project.domain if project else "").strip().lower()
-        if not domain:
-            return 0.5
-        
-        score = 0.0
-        # 1. Профильный домен
-        if profile.domain and profile.domain.strip().lower() == domain:
-            score += 0.6
-            
-        # 2. История участия
-        participations = profile.participations.filter(project__domain__iexact=domain).count()
-        score += participations * 0.2
-        
-        return min(1.0, score)
-
-    @staticmethod
-    def _calc_availability(profile, task=None):
-        """
-        Calculates availability score (0.0 to 1.0).
-        Now accounts for both workload and explicit unavailability (vacations).
-        """
-        # 1. Base availability from workload
-        active_hours = profile.active_task_hours
-        workload_score = max(0.0, (160.0 - active_hours) / 160.0)
-        
-        # 2. Check for overlapping unavailability periods if a task/date range is known
-        unavailability_penalty = 0
-        if task:
-            project = task.workflow.project
-            t_start = project.start_date
-            t_end = project.end_date
-            
-            if t_start and t_end:
-                from .models import EmployeeUnavailability
-                # Check for any overlap
-                overlaps = EmployeeUnavailability.objects.filter(
-                    employee=profile,
-                    start_date__lte=t_end,
-                    end_date__gte=t_start
-                ).exists()
-                if overlaps:
-                    unavailability_penalty = 0.5 # Significant penalty for conflict
-        
-        return max(0.0, workload_score - unavailability_penalty)
-
-    @staticmethod
-    def _calc_performance(profile):
-        avg_score = profile.participations.aggregate(avg=Avg('performance_score'))['avg'] or 0.8
-        return min(1.0, avg_score)
-
-    @staticmethod
-    def _calc_cost_fit(profile, task):
-        # Если проект имеет бюджет, ищем оптимальную ставку
-        budget = task.workflow.project.budget if task.workflow.project else 0
-        if not budget or budget == 0:
-            return 0.7  # Нейтрально
-        
-        rate = profile.hourly_rate
-        if rate == 0: return 1.0
-        
-        # Упрощенно: чем ниже ставка, тем выше балл (до определенного предела)
-        # В идеале: сравнение с выделенным бюджетом на задачу
-        return min(1.0, 5000 / float(rate)) if rate > 0 else 1.0
+    return {
+        'project': {
+            'id': project.id, 'name': project.name, 'status': project.status,
+            'start_date': project.start_date, 'end_date': project.end_date,
+        },
+        'employee': {'id': profile.id, 'full_name': user.get_full_name() or user.username},
+        'position': position,
+        'is_member': member is not None,
+        'joined_at': participation.joined_at if participation else (entry.start_date if entry else None),
+        'left_at': participation.left_at if participation else None,
+        'load_percent': entry.load_percent if entry else None,
+        'rating': rating,
+        'summary': summary,
+        'tasks': tasks,
+    }

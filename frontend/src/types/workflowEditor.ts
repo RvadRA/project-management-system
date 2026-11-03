@@ -12,6 +12,10 @@ export interface TaskNodeData {
   checklist?: string[];
   integrationUrl?: string;
   isParallel?: boolean;
+  /** Трудозатраты шага в часах — идут в загрузку исполнителя */
+  estimatedHours?: number;
+  /** Задача закрывается сразу после сдачи результата, без проверки менеджером */
+  autoApprove?: boolean;
 }
 
 export type WorkflowNode = Node<TaskNodeData> & {

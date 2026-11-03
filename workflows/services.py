@@ -1,7 +1,53 @@
 from django.utils import timezone
-from .models import WorkflowTask, WorkflowInstance, TaskReport
+from .models import WorkflowTask, WorkflowInstance
+
 
 class WorkflowService:
+    """
+    Жизненный цикл задачи процесса:
+
+        TODO ──(предшественники выполнены)──▶ IN_PROGRESS ──(отчёт)──▶ REVIEW ──(утверждение)──▶ DONE
+                                                  │   ▲                    │
+                                 (SLA истёк)      ▼   └──(возврат на доработку)
+                                              ESCALATED ──(отчёт)──▶ REVIEW
+
+    Завершение задачи активирует следующие по зависимостям; когда выполнены все — процесс завершён.
+    """
+
+    # ── Зависимости и активация ──────────────────────────────────────────────
+
+    @staticmethod
+    def is_blocked(task):
+        """Задача заблокирована, пока не выполнены все её предшественники."""
+        return any(dep.status != 'DONE' for dep in task.depends_on.all())
+
+    @staticmethod
+    def start_task(task, notify_assignee=True):
+        """
+        Переводит задачу в работу. Отсчёт SLA начинается с этого момента:
+        пока задача ждала своей очереди, срок не шёл.
+        """
+        now = timezone.now()
+        task.status = 'IN_PROGRESS'
+        task.started_at = task.started_at or now
+        task.completed_at = None
+        if task.sla_hours:
+            task.due_date = now + timezone.timedelta(hours=task.sla_hours)
+        task.save()
+
+        if notify_assignee and task.assigned_to_id:
+            from notifications.utils import notify
+            notify(
+                recipient=task.assigned_to,
+                title='Задача готова к выполнению',
+                body=f'Задача «{task.name}» в процессе «{task.workflow.name}» перешла в работу.'
+                     + (f' Срок: {task.sla_hours} ч.' if task.sla_hours else ''),
+                notif_type='TASK_ASSIGNED',
+                task_id=task.id,
+                project_id=task.workflow.project_id,
+            )
+        return task
+
     @staticmethod
     def activate_next_tasks(task):
         """
@@ -9,20 +55,47 @@ class WorkflowService:
         если все их предшественники выполнены (DONE).
         """
         if task.status != 'DONE':
+            return []
+        activated = []
+        for dep_task in task.dependent_tasks.filter(status='TODO').prefetch_related('depends_on'):
+            if not WorkflowService.is_blocked(dep_task):
+                activated.append(WorkflowService.start_task(dep_task))
+        return activated
+
+    @staticmethod
+    def activate_ready_tasks(instance):
+        """Запускает все задачи процесса, у которых нет невыполненных предшественников."""
+        activated = []
+        # Цикл нужен для задач, которые завершаются сразу при запуске (интеграции):
+        # после них могут открыться следующие
+        while True:
+            ready = [
+                t for t in instance.tasks.filter(status='TODO').prefetch_related('depends_on')
+                if not WorkflowService.is_blocked(t)
+            ]
+            if not ready:
+                return activated
+            for task in ready:
+                activated.append(WorkflowService.start_task(task))
+
+    @staticmethod
+    def refresh_instance_status(instance):
+        """Процесс завершён, когда выполнены все его задачи; иначе он снова в работе."""
+        if instance.status == 'CANCELLED':
             return
-            
-        # Находим задачи, которые зависят от текущей
-        dependent_tasks = task.dependent_tasks.all()
-        
-        for dep_task in dependent_tasks:
-            # Проверяем, все ли предшественники dep_task выполнены
-            predecessors_done = not dep_task.depends_on.exclude(status='DONE').exists()
-            
-            if predecessors_done and dep_task.status == 'TODO':
-                dep_task.status = 'IN_PROGRESS'
-                dep_task.started_at = timezone.now()
-                dep_task.save(update_fields=['status', 'started_at'])
-                # Логируем активацию (в идеале через AuditLog, но пока просто сохраняем)
+        statuses = set(instance.tasks.values_list('status', flat=True))
+        all_done = bool(statuses) and statuses == {'DONE'}
+        if all_done and instance.status != 'COMPLETED':
+            instance.status = 'COMPLETED'
+            instance.completed_at = timezone.now()
+            instance.save(update_fields=['status', 'completed_at'])
+        elif not all_done and instance.status == 'COMPLETED':
+            # Задачу вернули в работу или добавили новую — процесс больше не завершён
+            instance.status = 'IN_PROGRESS'
+            instance.completed_at = None
+            instance.save(update_fields=['status', 'completed_at'])
+
+    # ── Правила переходов ────────────────────────────────────────────────────
 
     @staticmethod
     def validate_transition(task, user, new_status):
@@ -32,7 +105,7 @@ class WorkflowService:
         condition = task.transition_condition
         if not condition:
             return True, ""
-            
+
         if new_status == 'DONE':
             # Пример условия: нужна проверка менеджером
             if condition.get('type') == 'approval_required':
@@ -51,6 +124,28 @@ class WorkflowService:
         return True, ""
 
     @staticmethod
+    def complete_task(task):
+        """Закрывает задачу и запускает следующие этапы."""
+        task.complete()
+        return WorkflowService.activate_next_tasks(task)
+
+    # ── Связь с планом (WBS) ─────────────────────────────────────────────────
+
+    @staticmethod
+    def aggregate_status(statuses):
+        """Сводный статус набора задач процесса для отображения в плане."""
+        statuses = set(statuses)
+        if not statuses:
+            return None
+        if statuses == {'DONE'}:
+            return 'DONE'
+        if statuses == {'TODO'}:
+            return 'TODO'
+        if statuses <= {'DONE', 'REVIEW'}:
+            return 'REVIEW'
+        return 'IN_PROGRESS'
+
+    @staticmethod
     def sync_wbs_status(workflow_task):
         """
         Синхронизирует статус в WBS плане (если есть связь).
@@ -60,21 +155,15 @@ class WorkflowService:
             return
         # К одной задаче плана привязан весь процесс (несколько WorkflowTask),
         # поэтому статус WBS — агрегат, а не статус последней сохранённой задачи
-        statuses = set(wbs_task.execution_tasks.values_list('status', flat=True))
-        if not statuses:
-            return
-        if statuses == {'DONE'}:
-            new_status = 'DONE'
-        elif statuses == {'TODO'}:
-            new_status = 'TODO'
-        elif statuses <= {'DONE', 'REVIEW'}:
-            new_status = 'REVIEW'
-        else:
-            new_status = 'IN_PROGRESS'
+        new_status = WorkflowService.aggregate_status(
+            wbs_task.execution_tasks.values_list('status', flat=True)
+        )
         # Only sync if the status actually changed to prevent loops
-        if wbs_task.status != new_status:
+        if new_status and wbs_task.status != new_status:
             wbs_task.status = new_status
             wbs_task.save(update_fields=['status'])
+
+    # ── Запуск процесса по шаблону ───────────────────────────────────────────
 
     @staticmethod
     def create_process_from_template(template, project, wbs_task=None, creator=None, existing_instance=None):
@@ -95,14 +184,14 @@ class WorkflowService:
                 created_by=creator,
                 started_at=timezone.now()
             )
-        
+
         # Get project members for auto-assignment if project exists
         project_members = []
         if project:
-            project_members = list(project.members.select_related('user').all())
-        
+            project_members = list(project.members.select_related('user', 'role_ref').all())
+
         from projects.services import AssignmentService
-        
+
         task_templates = list(template.task_templates.all().order_by('order', 'id'))
         # template_id -> [template_id предшественников]
         predecessors = {t.id: list(t.depends_on.values_list('id', flat=True)) for t in task_templates}
@@ -118,13 +207,16 @@ class WorkflowService:
                 predecessors[t_template.id] = list(group_predecessors)
                 current_group.append(t_template.id)
 
-        tasks_map = {} # template_id -> WorkflowTask
+        # Все задачи создаются в очереди (TODO) без срока: SLA начинает отсчитываться при активации.
+        # Запуск — отдельным шагом после расстановки зависимостей, иначе задача, которая
+        # завершается мгновенно (интеграция), не увидела бы своих последователей.
+        tasks_map = {}  # template_id -> WorkflowTask
+        # user_id -> открытых задач: исполнители выбираются с учётом текущей загрузки
+        assigned_counts = AssignmentService.open_task_counts(project_members)
         for t_template in task_templates:
-            # Активируем задачи без предшественников
-            is_start = not predecessors[t_template.id]
-
             # Инициализируем чек-лист из шаблона
             initial_checklist = [{"text": item, "is_done": False} for item in t_template.checklist] if t_template.checklist else []
+            assignee = AssignmentService.auto_assign(t_template, project_members, assigned_counts)
 
             wt = WorkflowTask.objects.create(
                 workflow=instance,
@@ -132,7 +224,7 @@ class WorkflowService:
                 name=t_template.name,
                 description=t_template.description,
                 task_type=t_template.task_type,
-                status='IN_PROGRESS' if is_start else 'TODO',
+                status='TODO',
                 sla_hours=t_template.sla_hours,
                 priority=t_template.priority,
                 estimated_hours=t_template.estimated_hours,
@@ -143,25 +235,15 @@ class WorkflowService:
                 linked_wbs_task=wbs_task,
                 integration_url=t_template.integration_url,
                 integration_config=t_template.integration_config,
-                due_date=timezone.now() + timezone.timedelta(hours=t_template.sla_hours or 24),
-                assigned_to=AssignmentService.auto_assign_heuristic(t_template.name, project_members) if project_members else None,
-                started_at=timezone.now() if is_start else None
+                transition_condition=t_template.transition_condition or {},
+                auto_approve=t_template.auto_approve,
+                assigned_to=assignee,
             )
-            
-            # Notify auto-assigned user
-            if wt.assigned_to:
-                from notifications.utils import notify
-                notify(
-                    recipient=wt.assigned_to,
-                    title='Автоматическое назначение задачи',
-                    body=f'Вы были автоматически назначены на задачу "{wt.name}" в рамках нового процесса "{instance.name}".',
-                    notif_type='TASK_ASSIGNED',
-                    task_id=wt.id,
-                    project_id=instance.project.id if instance.project else None
-                )
-
             tasks_map[t_template.id] = wt
-            
+
+        # save() проставляет срок при создании — для задач в очереди он не нужен
+        WorkflowTask.objects.filter(id__in=[t.id for t in tasks_map.values()]).update(due_date=None)
+
         # Устанавливаем зависимости
         for t_template in task_templates:
             wt = tasks_map[t_template.id]
@@ -169,4 +251,5 @@ class WorkflowService:
             if dep_tasks:
                 wt.depends_on.add(*dep_tasks)
 
+        WorkflowService.activate_ready_tasks(instance)
         return instance

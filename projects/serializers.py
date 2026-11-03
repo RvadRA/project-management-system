@@ -19,6 +19,19 @@ class GlobalSettingSerializer(serializers.ModelSerializer):
         fields = ['id', 'key', 'value', 'description', 'updated_at']
         read_only_fields = ['updated_at']
 
+    def validate(self, attrs):
+        key = attrs.get('key') or getattr(self.instance, 'key', None)
+        # От длины рабочего дня зависят все расчёты загрузки — не даём сохранить бессмысленное значение
+        if key == 'WORKDAY_HOURS' and 'value' in attrs:
+            try:
+                hours = float(str(attrs['value']).replace(',', '.'))
+            except ValueError:
+                hours = 0
+            if not 1 <= hours <= 24:
+                raise serializers.ValidationError({'value': 'Длина рабочего дня — число от 1 до 24 часов.'})
+            attrs['value'] = str(int(hours)) if hours.is_integer() else str(hours)
+        return attrs
+
 
 def restricted_task_user(context, project):
     """
@@ -208,6 +221,7 @@ class TaskSerializer(serializers.ModelSerializer):
 class PlanningBlockSerializer(serializers.ModelSerializer):
     tasks = serializers.SerializerMethodField()
     analytics = serializers.SerializerMethodField()
+    stats = serializers.SerializerMethodField()
     typical_risks = RiskSerializer(many=True, read_only=True)
     calendar_info = WorkCalendarSerializer(source='calendar', read_only=True)
     process_template_info = WorkflowTemplateSerializer(source='process_template', read_only=True)
@@ -232,56 +246,43 @@ class PlanningBlockSerializer(serializers.ModelSerializer):
         # Prevent deep recursion if needed, but for WBS it's fine
         return PlanningBlockSerializer(obj.children.all(), many=True, context=self.context).data
 
+    def get_stats(self, obj):
+        """Состав пакета / этапа: задачи (с подзадачами), трудозатраты, срок, роли."""
+        from .services import PlanningImportService
+        tasks = list(obj.tasks.all())
+        roles = sorted({rr.role.name for t in tasks for rr in t.required_roles.all()})
+        return {
+            'task_count': len(tasks),
+            'estimated_hours': round(sum(t.estimated_hours or 0 for t in tasks), 1),
+            'span_days': PlanningImportService.block_span_days(tasks),
+            'dependency_count': sum(len(t.outgoing_dependencies.all()) for t in tasks),
+            'roles': roles,
+        }
+
     def get_analytics(self, obj):
+        """
+        Использование шаблона в проектах: сколько этапов создано из пакета, сколько из них
+        полностью выполнено и сколько в среднем длились на практике.
+        """
         if not obj.is_template:
             return None
-            
-        # Find all blocks derived from this template (same name and domain)
-        # In a more advanced system, we'd have a 'template' FK on PlanningBlock
-        derived_blocks = PlanningBlock.objects.filter(
-            name=obj.name, 
-            domain=obj.domain, 
-            is_template=False
-        ).prefetch_related('tasks')
-        
-        if not derived_blocks.exists():
-            return {
-                'avg_actual_duration': obj.avg_duration or 0,
-                'success_rate': obj.success_rate or 1.0,
-                'usage_count': 0
-            }
-            
-        total_days = 0
-        blocks_with_tasks = 0
-        on_time_tasks = 0
-        total_completed_tasks = 0
-        
-        for block in derived_blocks:
-            tasks = block.tasks.all()
+        derived = list(obj.derived_blocks.prefetch_related('tasks'))
+        completed, spans = 0, []
+        for block in derived:
+            tasks = list(block.tasks.all())
             if not tasks:
                 continue
-                
-            # Duration: max end_date - min start_date
+            if all(t.status == 'DONE' for t in tasks):
+                completed += 1
             starts = [t.start_date for t in tasks if t.start_date]
             ends = [t.end_date for t in tasks if t.end_date]
             if starts and ends:
-                duration = (max(ends) - min(starts)).days
-                total_days += duration
-                blocks_with_tasks += 1
-            
-            # Success Rate: % of tasks completed by their end_date
-            # For this simulation, we'll look at 'DONE' tasks
-            from workflows.models import WorkflowTask
-            # This is tricky because PlanningBlock tasks and WorkflowTasks are separate.
-            # Usually we'd link them. For now, let's use a heuristic or just return template defaults
-            # if we can't find direct workflow correlations.
-            
-        avg_dur = round(total_days / blocks_with_tasks) if blocks_with_tasks > 0 else (obj.avg_duration or 0)
-        
+                spans.append((max(ends) - min(starts)).days)
         return {
-            'avg_actual_duration': avg_dur,
-            'success_rate': obj.success_rate or 0.85,
-            'usage_count': derived_blocks.count()
+            'usage_count': len(derived),
+            'completed_count': completed,
+            'avg_actual_duration': round(sum(spans) / len(spans)) if spans else None,
+            'success_rate': round(completed / len(derived), 2) if derived else None,
         }
 
 
@@ -297,6 +298,10 @@ class KnowledgeMaterialSerializer(serializers.ModelSerializer):
         model = KnowledgeMaterial
         fields = '__all__'
         read_only_fields = ['created_by']
+
+    def validate_file(self, value):
+        from config.uploads import validate_upload
+        return validate_upload(value)
 
     def get_file_name(self, obj):
         import os

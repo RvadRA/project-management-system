@@ -1,0 +1,2 @@
+run_id,method,tasks,target_tasks,no_target_tasks,top1,top3,mrr,ndcg3,false_exclusion_rate,candidate_coverage,task_coverage,excluded_candidates_mean,explanation_present_rate,explanation_factuality_pass_rate,explanation_checked,latency_p50_ms,latency_p95_ms,errors,error_rate,assigned_hours_cv,zero_assignment_share,max_assigned_hours,min_assigned_hours,top1_changed_vs_rule
+smoke_rule2,rule,300,290,10,0.3172,0.7345,0.5551,0.5552,0.0,0.1498,0.9667,25.5067,1.0,0.9138,290,1.61,1.94,0,0.0,0.7392,0.2333,1136.0,24.0,0

@@ -9,16 +9,13 @@ def check_all_tasks_sla():
     Periodic task to check SLA and escalate overdue tasks.
     Runs via Celery Beat.
     """
-    # Only check tasks that are not finished
-    tasks = WorkflowTask.objects.exclude(status__in=['DONE', 'CANCELLED'])
-    count = 0
-    for task in tasks:
-        if task.is_overdue:
-            # check_sla() updates status and sends notifications
-            task.check_sla()
-            count += 1
+    # Эскалируются только задачи в работе с истёкшим сроком
+    tasks = WorkflowTask.objects.filter(status='IN_PROGRESS', due_date__lt=timezone.now())
+    checked = tasks.count()
+    # check_sla() updates status and sends notifications
+    escalated = sum(1 for task in tasks if task.check_sla())
 
-    return f"Checked SLA for {tasks.count()} tasks. {count} tasks escalated."
+    return f"Checked SLA for {checked} overdue tasks. {escalated} tasks escalated."
 
 @shared_task
 def execute_integration_task(task_id):

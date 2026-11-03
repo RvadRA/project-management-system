@@ -25,43 +25,41 @@ class EmployeeProfile(models.Model):
     def __str__(self):
         return f"Profile: {self.user.get_full_name() or self.user.username}"
 
+    def active_entries(self):
+        """Записи загрузки, занимающие сотрудника (проекты завершены или отменены — не в счёт)."""
+        from .capacity import INACTIVE_PROJECT_STATUSES
+        return self.workload_entries.exclude(project__status__in=INACTIVE_PROJECT_STATUSES)
+
     @property
     def current_workload_percentage(self):
-        """
-        Dynamic workload calculation:
-        (Project Commitments + Active Task Hours) / Monthly Capacity (from GlobalSetting)
-        """
-        from projects.models import GlobalSetting
-        from workflows.models import WorkflowTask
-        from django.db.models import Sum
+        """Занятость сотрудника сегодня: сумма загрузок по активным записям."""
         import datetime
+        from django.db.models import Sum
         today = datetime.date.today()
-        
-        project_load = self.workload_entries.filter(
+        total = self.active_entries().filter(
             start_date__lte=today, end_date__gte=today
         ).aggregate(total=Sum('load_percent'))['total'] or 0
-        
-        capacity = GlobalSetting.get_value('MONTHLY_CAPACITY_HOURS', '160')
-        try:
-            capacity_float = float(capacity)
-        except ValueError:
-            capacity_float = 160.0
+        return round(float(total), 1)
 
-        # If project_load is already in %, we just return it. 
-        # But if we wanted to calculate based on hours: (hours / capacity_float) * 100
-        # For now, workload_entries store %, so we just return it.
-        return round(float(project_load), 1)
+    def _open_tasks(self):
+        from workflows.models import WorkflowTask
+        return WorkflowTask.objects.filter(
+            assigned_to=self.user, status__in=['TODO', 'IN_PROGRESS', 'REVIEW', 'ESCALATED'],
+        )
 
     @property
     def active_task_hours(self):
-        from workflows.models import WorkflowTask
+        """Оценка трудозатрат открытых задач, ч (поле «Трудозатраты» задачи; SLA — это срок, а не работа)."""
         from django.db.models import Sum
-        hours = WorkflowTask.objects.filter(
-            assigned_to=self.user,
-            status__in=['TODO', 'IN_PROGRESS', 'REVIEW']
-        ).aggregate(total=Sum('sla_hours'))['total'] or 0
-        return int(hours)
+        return round(self._open_tasks().aggregate(total=Sum('estimated_hours'))['total'] or 0, 1)
 
+    @property
+    def open_task_count(self):
+        return self._open_tasks().count()
+
+    @property
+    def unestimated_task_count(self):
+        return self._open_tasks().filter(estimated_hours__lte=0).count()
 
 
 class EmployeeSkill(models.Model):
@@ -102,9 +100,17 @@ class ProjectParticipation(models.Model):
     employee = models.ForeignKey(EmployeeProfile, on_delete=models.CASCADE, related_name='participations')
     project = models.ForeignKey('projects.Project', on_delete=models.CASCADE)
     role = models.CharField(max_length=100)
-    performance_score = models.FloatField(default=0, help_text="Оценка результативности 0.0–1.0")
+    performance_score = models.FloatField(default=0, help_text="Оценка результативности 0.0–1.0 (0 — не оценён)")
+    comment = models.TextField(blank=True, help_text="Комментарий руководителя к оценке")
+    rated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='given_ratings',
+    )
+    rated_at = models.DateTimeField(null=True, blank=True)
     joined_at = models.DateField(null=True, blank=True)
     left_at = models.DateField(null=True, blank=True)
+
+    class Meta:
+        unique_together = ('employee', 'project')
 
     def __str__(self):
         return f"{self.employee} @ {self.project.name} as {self.role}"
@@ -161,3 +167,11 @@ class EmployeeUnavailability(models.Model):
 
     def __str__(self):
         return f"{self.employee.user.username}: {self.get_type_display()} ({self.start_date} - {self.end_date})"
+
+
+class EmployeeExperienceEmbedding(models.Model):
+    """Cached local embedding of profile facts used by task semantic search."""
+    employee = models.OneToOneField(EmployeeProfile, on_delete=models.CASCADE, related_name='experience_embedding')
+    source_hash = models.CharField(max_length=64)
+    vector = models.JSONField(default=list)
+    updated_at = models.DateTimeField(auto_now=True)

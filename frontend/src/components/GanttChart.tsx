@@ -273,15 +273,15 @@ export default function GanttChart({ blocks, projectStartDate, projectEndDate }:
               style={{ minWidth: chartW }}
             >
               {/* Background */}
-              <rect width={chartW} height={svgH + 36} fill="#020617" />
+              <rect width={chartW} height={svgH + 36} fill="var(--slate-950)" />
 
               {/* Tick lines & labels */}
               {ticks.map((tick, ti) => {
                 const x = toX(tick);
                 return (
                   <g key={ti}>
-                    <line x1={x} y1={0} x2={x} y2={svgH + 36} stroke="#1e293b" strokeWidth={1} />
-                    <text x={x + 4} y={14} fill="#475569" fontSize={10} fontFamily="monospace">
+                    <line x1={x} y1={0} x2={x} y2={svgH + 36} stroke="var(--chart-grid)" strokeWidth={1} />
+                    <text x={x + 4} y={14} fill="var(--slate-600)" fontSize={10} fontFamily="monospace">
                       {formatDate(tick, true)}
                     </text>
                   </g>
@@ -308,7 +308,7 @@ export default function GanttChart({ blocks, projectStartDate, projectEndDate }:
                   y={36 + i * ROW_H}
                   width={chartW}
                   height={ROW_H}
-                  fill={row.type === 'block' ? '#0f172a' : i % 2 === 0 ? '#020617' : '#030712'}
+                  fill={row.type === 'block' ? 'var(--slate-900)' : i % 2 === 0 ? 'var(--slate-950)' : 'var(--gantt-row-alt)'}
                 />
               ))}
 
@@ -318,7 +318,7 @@ export default function GanttChart({ blocks, projectStartDate, projectEndDate }:
                   key={`hl-${i}`}
                   x1={0} y1={36 + (i + 1) * ROW_H}
                   x2={chartW} y2={36 + (i + 1) * ROW_H}
-                  stroke="#1e293b" strokeWidth={0.5}
+                  stroke="var(--chart-grid)" strokeWidth={0.5}
                 />
               ))}
 

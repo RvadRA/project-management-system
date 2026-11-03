@@ -39,7 +39,7 @@ class SkillViewSet(viewsets.ModelViewSet):
 
 class EmployeeProfileViewSet(viewsets.ModelViewSet):
     queryset = EmployeeProfile.objects.select_related('user').prefetch_related(
-        'employee_skills__skill', 'workload_entries', 'participations__project', 'certificates'
+        'employee_skills__skill', 'workload_entries', 'participations__project', 'participations__rated_by', 'certificates'
     )
     permission_classes = [IsAuthenticated, CanManageStaffOrReadOnly]
 
@@ -93,6 +93,33 @@ class EmployeeProfileViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND,
             )
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    # ── Project contribution ─────────────────────────────────────────────────
+
+    @action(detail=True, methods=['get'], url_path='contribution')
+    def contribution(self, request, pk=None):
+        """
+        GET /api/employees/profiles/{id}/contribution/?project=<id>
+        Что сотрудник сделал в проекте: задачи, сроки, оценка руководителя.
+        Доступно самому сотруднику, глобальным ролям и тем, кому в этом проекте открыты все задачи
+        (менеджер проекта — всегда).
+        """
+        from projects.models import Project
+        from .services import project_contribution
+        profile = self.get_object()
+        project_id = request.query_params.get('project')
+        project = Project.objects.filter(id=project_id).first() if str(project_id or '').isdigit() else None
+        if project is None:
+            return Response({'error': 'Проект не найден.'}, status=status.HTTP_404_NOT_FOUND)
+        user = request.user
+        is_owner = profile.user_id == user.id
+        can_see_tasks = access.has_project_perm(user, project, 'can_view_all_tasks')
+        if not (is_owner or access.has_global_access(user) or can_see_tasks):
+            return Response(
+                {'error': 'Задачи сотрудника в этом проекте видят он сам и те, кому в проекте открыты все задачи.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return Response(project_contribution(profile, project))
 
     # ── Unavailability ───────────────────────────────────────────────────────
 

@@ -117,6 +117,9 @@ class WorkflowTask(models.Model):
     depends_on = models.ManyToManyField('self', symmetrical=False, blank=True, related_name='dependent_tasks')
     auto_approve = models.BooleanField(default=False)
     checklist = models.JSONField(default=list, blank=True)  # Копия из шаблона [{text, is_done}]
+    review_comment = models.TextField(
+        blank=True, help_text="Комментарий проверяющего при возврате на доработку или отказе в согласовании"
+    )
 
     # Integration execution
     integration_url = models.URLField(blank=True, null=True)
@@ -146,6 +149,13 @@ class WorkflowTask(models.Model):
     def __str__(self):
         return f"{self.workflow.name} → {self.name} [{self.status}]"
 
+    @classmethod
+    def from_db(cls, db, field_names, values):
+        instance = super().from_db(db, field_names, values)
+        # Статус на момент загрузки — чтобы отличать переход в работу от повторного сохранения
+        instance._loaded_status = instance.__dict__.get('status')
+        return instance
+
     def save(self, *args, **kwargs):
         # Auto-prioritization check
         keywords = ["срочно", "критично", "горит", "в первую очередь", "авария", "срочно сделать", "asap"]
@@ -159,13 +169,20 @@ class WorkflowTask(models.Model):
             self.priority = 'URGENT'
             self.sla_hours = 2
             self.order = 0
-            if self.status != 'DONE':
+            if not self.due_date and self.status != 'DONE':
                 self.due_date = timezone.now() + timezone.timedelta(hours=2)
 
-        # Если due_date не задан, вычисляем его на основе sla_hours
-        if not self.due_date and self.sla_hours:
+        # Срок считаем от SLA при создании и при взятии в работу. Задача, ждущая своей очереди
+        # (TODO без срока), остаётся без срока — он появится при активации.
+        if not self.due_date and self.sla_hours and (self._state.adding or self.status != 'TODO'):
             self.due_date = timezone.now() + timezone.timedelta(hours=self.sla_hours)
+
+        # Признак «только что перешла в работу» — по нему один раз запускается интеграция
+        self._became_in_progress = self.status == 'IN_PROGRESS' and (
+            self._state.adding or getattr(self, '_loaded_status', None) != 'IN_PROGRESS'
+        )
         super().save(*args, **kwargs)
+        self._loaded_status = self.status
 
     def complete(self, user=None):
         self.status = 'DONE'
@@ -178,46 +195,65 @@ class WorkflowTask(models.Model):
             return True, "No URL provided"
 
         import requests
-        import json
-        
+        from config.netguard import UnsafeURL, assert_public_url
+
+        # Адрес задаёт пользователь, поэтому запрос не должен попасть во внутреннюю сеть сервера
+        try:
+            assert_public_url(self.integration_url)
+        except UnsafeURL as exc:
+            return False, f"Адрес вебхука отклонён: {exc}"
+
+        config = self.integration_config if isinstance(self.integration_config, dict) else {}
         payload = {
             'task_id': self.id,
             'task_name': self.name,
             'project': self.workflow.project.name if self.workflow.project else None,
-            'config': self.integration_config
+            'config': config,
         }
-        
+        raw_headers = config.get('headers')
+        headers = {'Content-Type': 'application/json'}
+        if isinstance(raw_headers, dict):
+            # Только простые строковые заголовки; Host и длину запроса формирует сама библиотека
+            headers.update({
+                str(k): str(v) for k, v in raw_headers.items()
+                if str(k).lower() not in ('host', 'content-length', 'transfer-encoding') and '\n' not in str(v) and '\r' not in str(v)
+            })
         try:
-            headers = self.integration_config.get('headers', {'Content-Type': 'application/json'})
-            timeout = self.integration_config.get('timeout', 10)
-            
+            timeout = min(max(float(config.get('timeout', 10)), 1), 30)
+        except (TypeError, ValueError):
+            timeout = 10
+
+        try:
             response = requests.post(
-                self.integration_url, 
-                json=payload, 
+                self.integration_url,
+                json=payload,
                 headers=headers,
-                timeout=timeout
+                timeout=timeout,
+                # Перенаправление могло бы увести запрос на внутренний адрес в обход проверки
+                allow_redirects=False,
             )
-            
-            if response.status_code < 400:
+            if response.status_code < 300:
                 self.complete()
                 return True, f"Success: {response.status_code}"
-            else:
-                return False, f"Failed: {response.status_code} - {response.text[:200]}"
-        except Exception as e:
-            return False, f"Error: {str(e)}"
+            # Тело ответа наружу не отдаём: через него можно было бы читать внутренние сервисы
+            return False, f"Failed: {response.status_code}"
+        except requests.RequestException as e:
+            return False, f"Error: {type(e).__name__}"
 
     @property
     def is_overdue(self):
-        if self.status in ['DONE', 'CANCELLED']:
+        # Сданная на проверку задача ждёт менеджера — исполнителю просрочку не засчитываем
+        if self.status in ['DONE', 'REVIEW', 'CANCELLED']:
             return False
         if not self.due_date:
             return False
         return timezone.now() > self.due_date
 
     def check_sla(self):
+        """Эскалирует задачу, если срок истёк, а она всё ещё в работе. Возвращает True при эскалации."""
         if self.is_overdue and self.status == 'IN_PROGRESS':
             self.status = 'ESCALATED'
-            self.save(update_fields=['status'])
+            self.save(update_fields=['status', 'updated_at'])
             # Create rich notification for escalation
             try:
                 from notifications.tasks import send_rich_task_notification
@@ -264,18 +300,15 @@ class TaskAttachment(models.Model):
         return self.original_name
 
 
-from django.db.models.signals import post_save
+from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 
 @receiver(post_save, sender=WorkflowTask)
 def update_workflow_status(sender, instance, **kwargs):
-    workflow = instance.workflow
-    if workflow.status != 'COMPLETED':
-        all_done = not workflow.tasks.exclude(status='DONE').exists()
-        if all_done and workflow.tasks.exists():
-            workflow.status = 'COMPLETED'
-            workflow.completed_at = timezone.now()
-            workflow.save(update_fields=['status', 'completed_at'])
+    # Процесс завершается, когда выполнены все задачи, и возвращается в работу,
+    # если задачу переоткрыли или добавили новую (раньше оставался «Завершён» навсегда)
+    from .services import WorkflowService
+    WorkflowService.refresh_instance_status(instance.workflow)
 
 @receiver(post_save, sender=WorkflowTask)
 def auto_execute_integration_task(sender, instance, created, **kwargs):
@@ -287,16 +320,27 @@ def auto_execute_integration_task(sender, instance, created, **kwargs):
         # Prevent recursion if this save is already inside an integration execution
         if getattr(instance, '_integration_running', False):
             return
-            
-        # We only want to trigger this if it's a fresh transition to IN_PROGRESS
-        # or if it was just created as IN_PROGRESS.
-        # Since we don't have old_state here easily, we use a custom flag 
-        # that we check and then clear.
-        
+
+        # Вебхук вызывается один раз — в момент перехода в работу, а не при каждом
+        # сохранении задачи (правка описания раньше вызывала внешний сервис повторно)
+        if not getattr(instance, '_became_in_progress', False):
+            return
+        # Задача без адреса вебхука выполняется вручную через форму сдачи результата
+        if not instance.integration_url:
+            return
+
         from .tasks import execute_integration_task
-        # We use a slight delay or check to ensure we don't loop
         execute_integration_task.delay(instance.id)
 
+
+
+@receiver(post_delete, sender=WorkflowTask)
+def update_workflow_status_on_delete(sender, instance, **kwargs):
+    from .services import WorkflowService
+    try:
+        WorkflowService.refresh_instance_status(instance.workflow)
+    except WorkflowInstance.DoesNotExist:
+        pass  # процесс удаляется вместе с задачами
 
 
 @receiver(post_save, sender=WorkflowTask)

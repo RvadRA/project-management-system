@@ -12,3 +12,5 @@ eventlet==0.41.0
 psycopg2-binary==2.9.12
 pillow==12.2.0
 requests==2.33.1
+faster-whisper==1.1.1
+av>=11,<19

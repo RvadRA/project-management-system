@@ -5,6 +5,68 @@ from django.db.models import Q
 from rest_framework.exceptions import ValidationError
 
 
+def default_allocation_period(project):
+    """Период загрузки по умолчанию — сроки проекта (без сроков — 90 дней от сегодня)."""
+    today = datetime.date.today()
+    start = project.start_date or today
+    end = project.end_date or (start + datetime.timedelta(days=90))
+    if end < start:
+        end = start + datetime.timedelta(days=90)
+    return start, end
+
+
+def employee_capacity(profile, project, start, end):
+    """
+    Свободное время сотрудника на период без учёта его загрузки по этому проекту
+    (запись по проекту как раз и редактируется).
+    """
+    from matching.capacity import holidays_for, period_capacity, workday_hours
+    entries = [e for e in profile.active_entries() if e.project_id != project.id]
+    cap = period_capacity(
+        entries, profile.unavailability.all(), start, end,
+        holidays_for(project.calendar), workday_hours(),
+    )
+    cap.pop('present_share', None)
+    return cap
+
+
+def auto_allocation(profile, project, start=None, end=None):
+    """
+    Загрузка «по умолчанию» для нового участника: всё гарантированно свободное время,
+    округлённое вниз до 5%. 0 — сотрудник в этот период полностью занят.
+    """
+    default_start, default_end = default_allocation_period(project)
+    cap = employee_capacity(profile, project, start or default_start, end or default_end)
+    return int(min(100, (cap['free_percent'] // 5) * 5)), cap
+
+
+def sync_workload_entry(project, user, allocation, start=None, end=None):
+    """
+    Запись загрузки сотрудника на проект. Даты переопределяются только если заданы явно:
+    раньше любая смена роли сбрасывала период на сроки проекта.
+    """
+    from matching.models import WorkloadEntry
+    from matching.services import ensure_profile
+    profile = ensure_profile(user)
+    # Use filter().first() and manual update/create to avoid MultipleObjectsReturned (500 error)
+    entry = WorkloadEntry.objects.filter(employee=profile, project=project).first()
+    default_start, default_end = default_allocation_period(project)
+    if entry:
+        entry.load_percent = allocation
+        if start:
+            entry.start_date = start
+        if end:
+            entry.end_date = end
+        if entry.end_date < entry.start_date:
+            entry.end_date = entry.start_date
+        entry.save()
+    else:
+        WorkloadEntry.objects.create(
+            employee=profile, project=project, load_percent=allocation,
+            start_date=start or default_start, end_date=end or default_end,
+        )
+
+
 class AssignmentService:
     @staticmethod
     def validate_assignment(task, user, allow_auto_add=False, role='DEVELOPER', role_ref_id=None, allocation_percentage=None):
@@ -38,31 +100,27 @@ class AssignmentService:
             
             if not member:
                 if allow_auto_add:
+                    from matching.services import ensure_profile
+                    profile = profile or ensure_profile(user)
+                    if allocation_percentage is None:
+                        # Загрузка не задана — берём доступное свободное время сотрудника
+                        allocation_percentage, _ = auto_allocation(profile, project)
+                        if allocation_percentage <= 0:
+                            return None, "Сотрудник полностью занят в период проекта — добавить его в команду нельзя"
                     member = ProjectMember.objects.create(
                         project=project,
                         user=user,
                         role=role,
                         role_ref_id=role_ref_id,
-                        allocation_percentage=allocation_percentage if allocation_percentage is not None else 100
+                        allocation_percentage=allocation_percentage,
                     )
-                    
+
                     # Если роль MANAGER и в проекте не назначен основной менеджер — назначаем
                     if role == 'MANAGER' and not project.manager:
                         project.manager = user
                         project.save(update_fields=['manager'])
-                    
-                    # Синхронизируем нагрузку
-                    if profile:
-                        from matching.models import WorkloadEntry
-                        WorkloadEntry.objects.update_or_create(
-                            employee=profile,
-                            project=project,
-                            defaults={
-                                'load_percent': allocation_percentage if allocation_percentage is not None else 100,
-                                'start_date': project.start_date or datetime.date.today(),
-                                'end_date': project.end_date or (datetime.date.today() + datetime.timedelta(days=30))
-                            }
-                        )
+
+                    sync_workload_entry(project, user, allocation_percentage)
                 else:
                     return None, "Пользователь не является участником проекта"
             elif allocation_percentage is not None:
@@ -75,37 +133,74 @@ class AssignmentService:
 
         return member, None
 
+    # Ключевые слова в названии задачи -> по чему искать исполнителя в должности участника
+    ROLE_KEYWORDS = {
+        'QA': (['TEST', 'QA', 'BUG', 'VERIFY', 'CHECK', 'ТЕСТ', 'ПРОВЕР'], ['QA', 'ТЕСТ']),
+        'DESIGNER': (['DESIGN', 'UI', 'UX', 'MOCKUP', 'BRAND', 'ДИЗАЙН', 'МАКЕТ'], ['DESIGN', 'ДИЗАЙН']),
+        'ANALYST': (['REQUIREMENT', 'SPEC', 'ANALYSIS', 'RESEARCH', 'АНАЛИЗ', 'ТРЕБОВАН', 'ИССЛЕД'], ['ANALY', 'АНАЛИТ']),
+        'DEVELOPER': (['CODE', 'DEV', 'BUILD', 'IMPLEMENT', 'DEPLOY', 'FIX', 'РАЗРАБОТ', 'РЕАЛИЗ', 'ДЕПЛОЙ'], ['DEVELOP', 'РАЗРАБОТ', 'DEVOPS']),
+        'MANAGER': (['MEETING', 'KICKOFF', 'BRIEFING', 'PLAN', 'APPROVAL', 'ВСТРЕЧ', 'ПЛАН', 'СОГЛАСОВ'], []),
+    }
+
     @staticmethod
-    def auto_assign_heuristic(task_name, project_members):
+    def open_task_counts(project_members):
+        """Сколько незакрытых задач процессов сейчас у каждого участника (user_id -> количество)."""
+        from django.db.models import Count
+        from workflows.models import WorkflowTask
+        user_ids = [m.user_id for m in project_members]
+        counts = {uid: 0 for uid in user_ids}
+        rows = WorkflowTask.objects.filter(assigned_to_id__in=user_ids).exclude(status='DONE').values(
+            'assigned_to_id').annotate(n=Count('id'))
+        for row in rows:
+            counts[row['assigned_to_id']] = row['n']
+        return counts
+
+    @staticmethod
+    def _members_with_role(project_members, role_code, title_parts=()):
+        """Участники с указанной ролью: по коду роли либо по названию должности."""
+        role_code = (role_code or '').upper()
+        result = []
+        for m in project_members:
+            title = (m.role_ref.name if m.role_ref_id else m.role or '').upper()
+            if role_code == 'MANAGER':
+                matched = m.role == 'MANAGER'
+            else:
+                matched = m.role.upper() == role_code or title == role_code or any(part in title for part in title_parts)
+            if matched:
+                result.append(m)
+        return result
+
+    @staticmethod
+    def auto_assign(task_template, project_members, task_counts):
         """
-        Simple heuristic for auto-assigning tasks based on roles and task names.
+        Автоназначение исполнителя на задачу процесса:
+          1. роль, заданная в шаблоне задачи (assigned_role);
+          2. иначе роль, угаданная по ключевым словам в названии;
+          3. иначе любой участник, кроме менеджеров.
+        Среди подходящих выбирается наименее загруженный задачами — раньше все задачи
+        процесса доставались первому участнику команды.
+
+        task_counts (user_id -> открытых задач) обновляется при каждом назначении.
         """
         if not project_members:
             return None
-            
-        task_name_upper = task_name.upper()
-        
-        # Role mapping
-        role_map = {
-            'DEVELOPER': ['CODE', 'DEV', 'BUILD', 'IMPLEMENT', 'SETUP', 'WORKSTATION', 'FIX'],
-            'QA': ['TEST', 'QA', 'BUG', 'VERIFY', 'CHECK'],
-            'DESIGNER': ['DESIGN', 'UI', 'UX', 'ASSET', 'MOCKUP', 'BRAND'],
-            'ANALYST': ['REQUIREMENT', 'SPEC', 'ANALYSIS', 'DATA', 'DOCUMENTATION', 'RESEARCH'],
-            'MANAGER': ['MEETING', 'INTRO', 'BRIEFING', 'PACKAGE', 'PLAN'],
-        }
-        
-        for role, keywords in role_map.items():
-            if any(kw in task_name_upper for kw in keywords):
-                # Find first member with this role
-                member = next((m for m in project_members if m.role == role), None)
-                if member:
-                    return member.user
-        
-        # Fallback: assign to the first non-manager member or manager if no others
-        others = [m for m in project_members if m.role != 'MANAGER']
-        if others:
-            return others[0].user
-        return project_members[0].user if project_members else None
+
+        candidates = []
+        if task_template.assigned_role:
+            candidates = AssignmentService._members_with_role(project_members, task_template.assigned_role)
+        if not candidates:
+            name = (task_template.name or '').upper()
+            for role_code, (keywords, title_parts) in AssignmentService.ROLE_KEYWORDS.items():
+                if any(kw in name for kw in keywords):
+                    candidates = AssignmentService._members_with_role(project_members, role_code, title_parts)
+                    if candidates:
+                        break
+        if not candidates:
+            candidates = [m for m in project_members if m.role != 'MANAGER'] or list(project_members)
+
+        chosen = min(candidates, key=lambda m: (task_counts.get(m.user_id, 0), m.id))
+        task_counts[chosen.user_id] = task_counts.get(chosen.user_id, 0) + 1
+        return chosen.user
 
     @staticmethod
     def assign_user(task, user, allow_auto_add=False, role='DEVELOPER', role_ref_id=None, allocation_percentage=None):
@@ -183,6 +278,88 @@ def get_working_days_delta(start_date: datetime.date, end_date: datetime.date, c
 
 class PlanningImportService:
 
+    # ── Копирование задач ────────────────────────────────────────────────────
+
+    @staticmethod
+    def _copy_tasks(source_block, new_block, *, start_date=None, scaling_factor=1.0, calendar=None,
+                    task_ids=None, as_template=False, spawn_workflows=False):
+        """
+        Копирует задачи этапа вместе с подзадачами (иерархия сохраняется), ролями и зависимостями.
+
+        task_ids        – копировать только выбранные задачи; их подзадачи берутся автоматически;
+        as_template     – для шаблона даты не считаются (остаются смещения и длительности);
+        spawn_workflows – для задач с шаблоном процесса сразу запустить процесс.
+        Возвращает словарь {id исходной задачи: новая задача}.
+        """
+        from collections import defaultdict
+        from plans.models import TaskRequiredRole
+
+        tasks = list(source_block.tasks.prefetch_related('required_roles', 'outgoing_dependencies'))
+        if task_ids:
+            children = defaultdict(list)
+            for t in tasks:
+                children[t.parent_id].append(t.id)
+            selected, stack = set(), list(task_ids)
+            while stack:
+                tid = stack.pop()
+                if tid not in selected:
+                    selected.add(tid)
+                    stack.extend(children.get(tid, []))
+            tasks = [t for t in tasks if t.id in selected]
+
+        mapping = {}
+        for t in sorted(tasks, key=lambda t: (t.order, t.id)):
+            duration = max(1, round(t.duration_days * scaling_factor))
+            offset = round(t.start_offset_days * scaling_factor)
+            fields = dict(
+                block=new_block, name=t.name, description=t.description,
+                duration_days=duration, start_offset_days=offset, status='TODO',
+                weight=t.weight, priority=t.priority, risk_level=t.risk_level, order=t.order,
+                estimated_hours=round(t.estimated_hours * scaling_factor, 1),
+                process_template=t.process_template,
+            )
+            if not as_template:
+                task_start = add_working_days(start_date, offset, calendar=calendar)
+                fields.update(start_date=task_start, end_date=add_working_days(task_start, duration, calendar=calendar))
+            new_task = Task.objects.create(**fields)
+            for rr in t.required_roles.all():
+                TaskRequiredRole.objects.create(task=new_task, role=rr.role)
+            mapping[t.id] = new_task
+
+        # Иерархия и зависимости — вторым проходом, когда уже созданы все задачи
+        for t in tasks:
+            new_task = mapping[t.id]
+            if t.parent_id in mapping:
+                new_task.parent = mapping[t.parent_id]
+                new_task.save(update_fields=['parent'])
+            for dep in t.outgoing_dependencies.all():
+                if dep.to_task_id in mapping:
+                    TaskDependency.objects.create(from_task=new_task, to_task=mapping[dep.to_task_id], type=dep.type)
+
+        if spawn_workflows:
+            from workflows.services import WorkflowService
+            for new_task in mapping.values():
+                if new_task.process_template:
+                    WorkflowService.create_process_from_template(
+                        new_task.process_template, new_block.project,
+                        wbs_task=new_task, creator=new_block.project.manager,
+                    )
+        return mapping
+
+    @staticmethod
+    def block_span_days(tasks) -> int:
+        """Длительность этапа в днях: по датам задач, а у шаблона (дат нет) — по смещениям и срокам."""
+        tasks = list(tasks)
+        if not tasks:
+            return 0
+        starts = [t.start_date for t in tasks if t.start_date]
+        ends = [t.end_date for t in tasks if t.end_date]
+        if len(starts) == len(tasks) and len(ends) == len(tasks):
+            return max(1, (max(ends) - min(starts)).days)
+        return max(t.start_offset_days + t.duration_days for t in tasks)
+
+    # ── Перенос и клонирование этапов ────────────────────────────────────────
+
     @staticmethod
     def import_template_to_project(
         template_block: PlanningBlock,
@@ -208,67 +385,19 @@ class PlanningImportService:
             complexity=template_block.complexity,
             success_rate=template_block.success_rate,
             process_template=template_block.process_template,
+            source_template=template_block,
         )
-        
-        # Copy typical risks
         new_block.typical_risks.set(template_block.typical_risks.all())
-
-        calendar = new_block.calendar
-        old_to_new_task_map = {}
-        
-        tasks_to_import = template_block.tasks.all()
-        if task_ids:
-            tasks_to_import = tasks_to_import.filter(id__in=task_ids)
-
-        for t_task in tasks_to_import:
-            scaled_duration = max(1, round(t_task.duration_days * scaling_factor))
-            
-            # Use working days for offset and duration
-            computed_start = add_working_days(
-                start_date, 
-                round(t_task.start_offset_days * scaling_factor),
-                calendar=calendar
-            )
-            computed_end = add_working_days(computed_start, scaled_duration, calendar=calendar)
-
-            new_task = Task.objects.create(
-                block=new_block,
-                name=t_task.name,
-                description=t_task.description,
-                duration_days=scaled_duration,
-                start_offset_days=round(t_task.start_offset_days * scaling_factor),
-                start_date=computed_start,
-                end_date=computed_end,
-                status='TODO',
-                weight=t_task.weight,
-                priority=t_task.priority,
-                estimated_hours=t_task.estimated_hours * scaling_factor,
-                risk_level=t_task.risk_level,
-            )
-            
-            # Copy required roles
-            from plans.models import TaskRequiredRole
-            for rr in t_task.required_roles.all():
-                TaskRequiredRole.objects.create(task=new_task, role=rr.role)
-
-            old_to_new_task_map[t_task.id] = new_task
-
-        # Copy dependencies
-        for t_task in tasks_to_import:
-            for dep in t_task.outgoing_dependencies.all():
-                if dep.to_task.id in old_to_new_task_map:
-                    TaskDependency.objects.create(
-                        from_task=old_to_new_task_map[t_task.id],
-                        to_task=old_to_new_task_map[dep.to_task.id],
-                        type=dep.type,
-                    )
+        PlanningImportService._copy_tasks(
+            template_block, new_block, start_date=start_date, scaling_factor=scaling_factor,
+            calendar=new_block.calendar, task_ids=task_ids,
+        )
 
         # Trigger process if template exists
         if template_block.process_template:
             PlanningImportService.create_process_from_block(new_block)
 
         return new_block
-
 
     @staticmethod
     def clone_block_recursive(
@@ -281,7 +410,6 @@ class PlanningImportService:
         """
         Recursively clone a block and its children into a project.
         """
-        # Create the new block
         new_block = PlanningBlock.objects.create(
             name=source_block.name,
             domain=source_block.domain,
@@ -294,65 +422,13 @@ class PlanningImportService:
             avg_duration=source_block.avg_duration,
             complexity=source_block.complexity,
             success_rate=source_block.success_rate,
+            source_template=source_block if source_block.is_template else source_block.source_template,
         )
-        
-        # Copy risks
         new_block.typical_risks.set(source_block.typical_risks.all())
-
-        # Copy tasks (using existing logic for tasks within this block)
-        calendar = new_block.calendar
-        old_to_new_task_map = {}
-        for t_task in source_block.tasks.all():
-            scaled_duration = max(1, round(t_task.duration_days * scaling_factor))
-            computed_start = add_working_days(
-                start_date, 
-                round(t_task.start_offset_days * scaling_factor),
-                calendar=calendar
-            )
-            computed_end = add_working_days(computed_start, scaled_duration, calendar=calendar)
-
-            new_task = Task.objects.create(
-                block=new_block,
-                name=t_task.name,
-                description=t_task.description,
-                duration_days=scaled_duration,
-                start_offset_days=round(t_task.start_offset_days * scaling_factor),
-                start_date=computed_start,
-                end_date=computed_end,
-                status='TODO',
-                weight=t_task.weight,
-                priority=t_task.priority,
-                estimated_hours=t_task.estimated_hours * scaling_factor,
-                risk_level=t_task.risk_level,
-                order=t_task.order,
-                process_template=t_task.process_template
-            )
-            
-            # Trigger process if task has template
-            if new_task.process_template:
-                from workflows.services import WorkflowService
-                WorkflowService.create_process_from_template(
-                    new_task.process_template, 
-                    new_block.project, 
-                    wbs_task=new_task,
-                    creator=new_block.project.manager
-                )
-            
-            # Copy roles
-            from plans.models import TaskRequiredRole
-            for rr in t_task.required_roles.all():
-                TaskRequiredRole.objects.create(task=new_task, role=rr.role)
-            old_to_new_task_map[t_task.id] = new_task
-
-        # Copy dependencies (internal to block)
-        for t_task in source_block.tasks.all():
-            for dep in t_task.outgoing_dependencies.all():
-                if dep.to_task.id in old_to_new_task_map:
-                    TaskDependency.objects.create(
-                        from_task=old_to_new_task_map[t_task.id],
-                        to_task=old_to_new_task_map[dep.to_task.id],
-                        type=dep.type,
-                    )
+        PlanningImportService._copy_tasks(
+            source_block, new_block, start_date=start_date, scaling_factor=scaling_factor,
+            calendar=new_block.calendar, spawn_workflows=True,
+        )
 
         # Trigger process if template exists
         if new_block.process_template:
@@ -363,6 +439,32 @@ class PlanningImportService:
             PlanningImportService.clone_block_recursive(child, project, start_date, parent=new_block, scaling_factor=scaling_factor)
 
         return new_block
+
+    @staticmethod
+    def save_block_as_template(block: PlanningBlock, name: str = None, parent: PlanningBlock = None) -> PlanningBlock:
+        """
+        Сохраняет этап проекта (вместе с вложенными этапами, подзадачами, ролями и зависимостями)
+        как шаблон каталога. Длительность пакета берётся из реального плана этапа.
+        """
+        tasks = list(block.tasks.all())
+        template = PlanningBlock.objects.create(
+            name=name or f"Шаблон: {block.name}",
+            domain=block.domain,
+            is_template=True,
+            project=None,
+            parent=parent,
+            order=block.order,
+            process_template=block.process_template,
+            calendar=block.calendar,
+            avg_duration=PlanningImportService.block_span_days(tasks) or block.avg_duration,
+            complexity=block.complexity,
+            success_rate=block.success_rate,
+        )
+        template.typical_risks.set(block.typical_risks.all())
+        PlanningImportService._copy_tasks(block, template, as_template=True)
+        for child in block.children.all():
+            PlanningImportService.save_block_as_template(child, name=child.name, parent=template)
+        return template
 
     @staticmethod
     def create_process_from_block(block: PlanningBlock):
@@ -535,56 +637,11 @@ class PlanningImportService:
             avg_duration=source_block.avg_duration,
             complexity=source_block.complexity,
             success_rate=source_block.success_rate,
+            source_template=source_block.source_template,
         )
-        
-        # Copy typical risks
         new_block.typical_risks.set(source_block.typical_risks.all())
-
-        calendar = new_block.calendar
-        old_to_new_task_map = {}
-        
-        tasks_to_import = source_block.tasks.all()
-        if task_ids:
-            tasks_to_import = tasks_to_import.filter(id__in=task_ids)
-
-        for t_task in tasks_to_import:
-            scaled_duration = max(1, round(t_task.duration_days * scaling_factor))
-            computed_start = add_working_days(
-                start_date, 
-                round(t_task.start_offset_days * scaling_factor),
-                calendar=calendar
-            )
-            computed_end = add_working_days(computed_start, scaled_duration, calendar=calendar)
-
-            new_task = Task.objects.create(
-                block=new_block,
-                name=t_task.name,
-                description=t_task.description,
-                duration_days=scaled_duration,
-                start_offset_days=round(t_task.start_offset_days * scaling_factor),
-                start_date=computed_start,
-                end_date=computed_end,
-                status='TODO',
-                weight=t_task.weight,
-                priority=t_task.priority,
-                estimated_hours=t_task.estimated_hours * scaling_factor,
-                risk_level=t_task.risk_level,
-            )
-            
-            # Copy required roles
-            from plans.models import TaskRequiredRole
-            for rr in t_task.required_roles.all():
-                TaskRequiredRole.objects.create(task=new_task, role=rr.role)
-
-            old_to_new_task_map[t_task.id] = new_task
-
-        for t_task in tasks_to_import:
-            for dep in t_task.outgoing_dependencies.all():
-                if dep.to_task.id in old_to_new_task_map:
-                    TaskDependency.objects.create(
-                        from_task=old_to_new_task_map[t_task.id],
-                        to_task=old_to_new_task_map[dep.to_task.id],
-                        type=dep.type,
-                    )
-
+        PlanningImportService._copy_tasks(
+            source_block, new_block, start_date=start_date, scaling_factor=scaling_factor,
+            calendar=new_block.calendar, task_ids=task_ids,
+        )
         return new_block

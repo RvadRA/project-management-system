@@ -11,6 +11,12 @@
   --color-slate-300: var(--slate-300);
   --color-slate-200: var(--slate-200);
   --color-slate-100: var(--slate-100);
+  --color-slate-850: var(--slate-850);
+  --color-slate-805: var(--slate-800);
+  --color-slate-750: var(--slate-750);
+  --color-slate-650: var(--slate-650);
+  --color-slate-350: var(--slate-350);
+  --color-violet-650: var(--violet-650);
 
   /* Map accent colors to CSS variables so they support light theme swap natively */
   --color-red-500: var(--red-500);
@@ -71,6 +77,16 @@
   --slate-300: #cbd5e1;
   --slate-200: #e2e8f0;
   --slate-100: #f1f5f9;
+  --slate-850: #162032;
+  --slate-750: #283548;
+  --slate-650: #3e4c61;
+  --slate-350: #b1bccb;
+  --violet-650: #6d32e0;
+
+  /* Чередование строк диаграммы Ганта */
+  --gantt-row-alt: #030712;
+  /* Сетка графиков */
+  --chart-grid: #1e293b;
 
   /* Standard dark mode accent values */
   --red-500: #ef4444;
@@ -121,63 +137,76 @@
 }
 
 .theme-light {
-  --slate-950: #f1f5f9;
+  /* Поверхности: мягкий холодный фон, белые карточки, спокойные заливки */
+  --slate-950: #f3f4fb;
   --slate-900: #ffffff;
-  --slate-800: #e2e8f0;
-  --slate-700: #cbd5e1;
-  --slate-600: #475569; /* Darker gray for readable subtexts/timestamps */
-  --slate-500: #334155; /* Darker secondary text */
-  --slate-400: #1e293b; /* Dark regular text */
-  --slate-300: #1e293b;
-  --slate-200: #0f172a;
-  --slate-100: #0f172a;
+  --slate-850: #f6f7fc;
+  --slate-800: #eceff7;
+  --slate-750: #e2e7f1;
+  --slate-700: #d6dce9;
 
-  /* Premium vibrant light mode values (Rose, Teal, Orange) */
-  --red-500: #e11d48;
-  --red-400: #f43f5e;
-  --red-300: #fda4af;
+  /* Текст: от приглушённого к основному (не чисто чёрный — меньше нагрузка на глаза) */
+  --slate-650: #8089a0;
+  --slate-600: #6a748a;
+  --slate-500: #556077;
+  --slate-400: #414b61;
+  --slate-350: #353f54;
+  --slate-300: #2c3548;
+  --slate-200: #1f2738;
+  --slate-100: #171e2d;
 
-  --emerald-500: #0d9488;
-  --emerald-400: #14b8a6;
-  --emerald-300: #99f6e4;
+  --gantt-row-alt: #f8f9fd;
+  --chart-grid: #dde2ee;
 
-  --amber-500: #ea580c;
-  --amber-400: #f97316;
-  --amber-300: #ffc996;
+  /* Акцент: живой фиолетовый с различимыми ступенями (кнопка / наведение / подсветка) */
+  --violet-650: #5f37d6;
+  --violet-600: #6b46e5;
+  --violet-500: #7c5cf0;
+  --violet-400: #8e72f4;
+  --violet-300: #6b46e5;
 
-  --violet-600: #4c1d95;
-  --violet-500: #4c1d95;
-  --violet-400: #4c1d95;
-  --violet-300: #4c1d95;
+  --indigo-600: #4f52e0;
+  --indigo-500: #6468ee;
+  --indigo-400: #7a7ef3;
+  --indigo-300: #4f52e0;
 
-  --indigo-600: #312e81;
-  --indigo-500: #312e81;
-  --indigo-400: #312e81;
-  --indigo-300: #312e81;
+  --blue-500: #3b82f6;
+  --blue-400: #4a8df8;
+  --blue-300: #2563eb;
 
-  --blue-500: #1e3a8a;
-  --blue-400: #1e3a8a;
-  --blue-300: #1e3a8a;
+  /* Статусы: бирюзовый «успех», коралловый «риск», тёплый оранжевый «внимание» */
+  --emerald-500: #0f9f8e;
+  --emerald-400: #16b3a0;
+  --emerald-300: #0f766e;
 
-  --pink-500: #831843;
-  --pink-400: #831843;
-  --pink-300: #831843;
+  --red-500: #e5484d;
+  --red-400: #ec5d62;
+  --red-300: #c62a2f;
 
-  --rose-500: #881337;
-  --rose-400: #881337;
-  --rose-300: #881337;
+  --amber-500: #e8730c;
+  --amber-400: #f08a24;
+  --amber-300: #b45309;
 
-  --cyan-500: #164e63;
-  --cyan-400: #164e63;
-  --cyan-300: #164e63;
+  /* Для этих цветов 500 — заливка, 400/300 — читаемый на белом текст */
+  --pink-500: #dd3c8a;
+  --pink-400: #c02672;
+  --pink-300: #9d1c5c;
 
-  --teal-500: #115e59;
-  --teal-400: #115e59;
-  --teal-300: #115e59;
+  --rose-500: #e5486b;
+  --rose-400: #c22a50;
+  --rose-300: #9f1f41;
 
-  --purple-500: #581c87;
-  --purple-400: #581c87;
-  --purple-300: #581c87;
+  --cyan-500: #0e9cc0;
+  --cyan-400: #0b7a98;
+  --cyan-300: #0a6078;
+
+  --teal-500: #0f9f8e;
+  --teal-400: #0c7d70;
+  --teal-300: #0a6359;
+
+  --purple-500: #9a4af0;
+  --purple-400: #7f2fd6;
+  --purple-300: #6a24b4;
 }
 
 ::-webkit-scrollbar {
@@ -218,7 +247,35 @@ body, html {
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 
-/* Light mode overrides for high contrast text and form elements */
+/* ═══════════════════════ Светлая тема: переопределения ═══════════════════════ */
+
+.theme-light ::-webkit-scrollbar-thumb {
+  background: #c9d0e0;
+}
+.theme-light ::-webkit-scrollbar-thumb:hover {
+  background: #a9b3c8;
+}
+
+/* Лёгкий цветной оттенок боковой панели вместо сплошного белого */
+.theme-light aside {
+  background-image: linear-gradient(180deg, #ffffff 0%, #f5f3ff 100%);
+}
+
+/* Карточки отделяются от фона мягкой тенью, а не жирной рамкой */
+.theme-light .bg-slate-900.border.rounded-xl,
+.theme-light .bg-slate-900.border.rounded-2xl {
+  box-shadow: 0 1px 2px rgba(31, 39, 56, 0.04), 0 4px 14px rgba(31, 39, 56, 0.05);
+}
+
+/* Затемнение под модальными окнами (раньше было белёсым, окно сливалось со страницей) */
+.theme-light .fixed.inset-0.bg-slate-950\/80,
+.theme-light .fixed.inset-0.bg-slate-950\/90 {
+  background-color: rgba(31, 39, 56, 0.45) !important;
+}
+.theme-light .fixed.inset-0 > .bg-slate-900 {
+  box-shadow: 0 24px 60px rgba(31, 39, 56, 0.22);
+}
+
 .theme-light h1,
 .theme-light h2,
 .theme-light h3,
@@ -228,11 +285,11 @@ body, html {
   color: var(--slate-100) !important;
 }
 
-/* Force text-violet-400, text-violet-300, text-indigo-400 etc. to be dark and legible in light theme */
+/* Цветной текст: тёмные оттенки, читаемые на белом */
 .theme-light .text-violet-400,
 .theme-light .text-violet-350,
 .theme-light .text-violet-300 {
-  color: #6d28d9 !important;
+  color: #5b34d0 !important;
 }
 
 .theme-light .text-indigo-400,
@@ -243,21 +300,21 @@ body, html {
 .theme-light .text-emerald-400,
 .theme-light .text-emerald-350,
 .theme-light .text-emerald-300 {
-  color: #0f766e !important;
+  color: #0c7d70 !important;
 }
 
 .theme-light .text-red-300,
 .theme-light .text-red-400,
 .theme-light .text-red-450,
 .theme-light .text-red-400\/60 {
-  color: #be123c !important;
+  color: #c62a2f !important;
 }
 
 .theme-light .text-amber-400,
 .theme-light .text-amber-350,
 .theme-light .text-amber-300,
 .theme-light .text-amber-300\/80 {
-  color: #c2410c !important;
+  color: #b45309 !important;
 }
 
 .theme-light .text-blue-400,
@@ -266,49 +323,51 @@ body, html {
   color: #1d4ed8 !important;
 }
 
-/* Ensure all light-theme borders are clearly visible with high definition */
+/* Рамки: спокойные, двух ступеней (разделители и элементы управления) */
 .theme-light .border-slate-950,
 .theme-light .border-slate-900,
 .theme-light .border-slate-850,
 .theme-light .border-slate-800,
-.theme-light .border-slate-750,
+.theme-light .border-slate-750 {
+  border-color: #e0e5f0 !important;
+}
 .theme-light .border-slate-700,
 .theme-light .border-slate-600,
 .theme-light .border-slate-500,
 .theme-light .border-slate-400,
 .theme-light .border-slate-300 {
-  border-color: #94a3b8 !important;
+  border-color: #cdd4e3 !important;
 }
 
-/* Force legibility and colors on translucent status badges and background elements in light mode */
+/* Полупрозрачные плашки статусов */
 .theme-light .bg-emerald-500\/10,
 .theme-light .bg-emerald-500\/20,
 .theme-light .border-emerald-500\/20 {
-  background-color: rgba(13, 148, 136, 0.12) !important;
-  border-color: rgba(13, 148, 136, 0.35) !important;
-  color: #0f766e !important;
+  background-color: rgba(15, 159, 142, 0.11) !important;
+  border-color: rgba(15, 159, 142, 0.3) !important;
+  color: #0c7d70 !important;
 }
 
 .theme-light .bg-red-500\/10,
 .theme-light .bg-red-500\/15,
 .theme-light .bg-red-500\/20,
 .theme-light .border-red-500\/20 {
-  background-color: rgba(225, 29, 72, 0.12) !important;
-  border-color: rgba(225, 29, 72, 0.35) !important;
-  color: #be123c !important;
+  background-color: rgba(229, 72, 77, 0.1) !important;
+  border-color: rgba(229, 72, 77, 0.3) !important;
+  color: #c62a2f !important;
 }
 
 .theme-light .bg-amber-500\/10,
 .theme-light .border-amber-500\/20 {
-  background-color: rgba(234, 88, 12, 0.12) !important;
-  border-color: rgba(234, 88, 12, 0.35) !important;
-  color: #c2410c !important;
+  background-color: rgba(232, 115, 12, 0.11) !important;
+  border-color: rgba(232, 115, 12, 0.3) !important;
+  color: #b45309 !important;
 }
 
 .theme-light .bg-blue-500\/10,
 .theme-light .border-blue-500\/20 {
-  background-color: rgba(59, 130, 246, 0.12) !important;
-  border-color: rgba(59, 130, 246, 0.35) !important;
+  background-color: rgba(59, 130, 246, 0.1) !important;
+  border-color: rgba(59, 130, 246, 0.3) !important;
   color: #1d4ed8 !important;
 }
 
@@ -316,114 +375,173 @@ body, html {
 .theme-light .bg-violet-650\/20,
 .theme-light .bg-violet-600\/20,
 .theme-light .bg-violet-400\/5 {
-  background-color: rgba(139, 92, 246, 0.12) !important;
-  border-color: rgba(139, 92, 246, 0.35) !important;
-  color: #6d28d9 !important;
+  background-color: rgba(107, 70, 229, 0.1) !important;
+  border-color: rgba(107, 70, 229, 0.28) !important;
+  color: #5b34d0 !important;
 }
 
 .theme-light .bg-indigo-500\/10 {
-  background-color: rgba(99, 102, 241, 0.12) !important;
-  border-color: rgba(99, 102, 241, 0.35) !important;
+  background-color: rgba(100, 104, 238, 0.1) !important;
+  border-color: rgba(100, 104, 238, 0.3) !important;
   color: #4338ca !important;
 }
 
 .theme-light .bg-slate-700\/50,
 .theme-light .border-slate-600\/30 {
-  background-color: rgba(71, 85, 105, 0.1) !important;
-  border-color: rgba(71, 85, 105, 0.35) !important;
-  color: #475569 !important;
+  background-color: rgba(85, 96, 119, 0.1) !important;
+  border-color: rgba(85, 96, 119, 0.28) !important;
+  color: #556077 !important;
+}
+
+/* Серые аватары: в светлой теме слейт-градиент становился почти белым под белой буквой */
+.theme-light .from-slate-600 {
+  --tw-gradient-from: #7d879c !important;
+}
+.theme-light .to-slate-700 {
+  --tw-gradient-to: #5d677d !important;
 }
 
 /* Hover overrides in light theme */
 .theme-light .hover\:text-red-400:hover {
-  color: #be123c !important;
+  color: #c62a2f !important;
 }
 
 .theme-light .hover\:bg-red-500\/10:hover {
-  background-color: rgba(225, 29, 72, 0.15) !important;
+  background-color: rgba(229, 72, 77, 0.14) !important;
 }
 
-.theme-light .hover\:text-white:hover {
-  color: var(--slate-100) !important;
-}
-
-/* Force text-white to be dark slate in light mode */
-.theme-light .text-white {
-  color: var(--slate-100) !important;
-}
-
-/* Force group hover text-white and absolute hovers to turn dark slate in light mode to prevent invisible text on white card background hover */
+/* text-white по умолчанию — тёмный текст (на светлых поверхностях белый не виден) */
+.theme-light .text-white,
+.theme-light .hover\:text-white:hover,
 .theme-light .group:hover .group-hover\:text-white {
   color: var(--slate-100) !important;
 }
-.theme-light .hover\:text-white:hover {
-  color: var(--slate-100) !important;
-}
 
-/* Restore white color ONLY for elements that originally have the .text-white class, when they are inside buttons, badges or solid colored backgrounds (WITHOUT slashes / which indicate translucent backgrounds) */
-.theme-light button.text-white,
-.theme-light button .text-white,
-.theme-light a.text-white,
-.theme-light a .text-white,
-.theme-light [class*="bg-violet"]:not([class*="/"]) .text-white,
-.theme-light [class*="bg-violet"]:not([class*="/"]).text-white,
-.theme-light [class*="bg-indigo"]:not([class*="/"]) .text-white,
-.theme-light [class*="bg-indigo"]:not([class*="/"]).text-white,
-.theme-light [class*="bg-emerald"]:not([class*="/"]) .text-white,
-.theme-light [class*="bg-emerald"]:not([class*="/"]).text-white,
-.theme-light [class*="bg-red"]:not([class*="/"]) .text-white,
-.theme-light [class*="bg-red"]:not([class*="/"]).text-white,
-.theme-light [class*="bg-blue"]:not([class*="/"]) .text-white,
-.theme-light [class*="bg-blue"]:not([class*="/"]).text-white,
-.theme-light [class*="bg-purple"]:not([class*="/"]) .text-white,
-.theme-light [class*="bg-purple"]:not([class*="/"]).text-white,
-.theme-light [class*="bg-green"]:not([class*="/"]) .text-white,
-.theme-light [class*="bg-green"]:not([class*="/"]).text-white,
-.theme-light [class*="bg-amber"]:not([class*="/"]) .text-white,
-.theme-light [class*="bg-amber"]:not([class*="/"]).text-white,
-.theme-light [class*="bg-pink"]:not([class*="/"]) .text-white,
-.theme-light [class*="bg-pink"]:not([class*="/"]).text-white,
-.theme-light [class*="bg-rose"]:not([class*="/"]) .text-white,
-.theme-light [class*="bg-rose"]:not([class*="/"]).text-white,
-.theme-light [class*="bg-cyan"]:not([class*="/"]) .text-white,
-.theme-light [class*="bg-cyan"]:not([class*="/"]).text-white,
-.theme-light [class*="bg-teal"]:not([class*="/"]) .text-white,
-.theme-light [class*="bg-teal"]:not([class*="/"]).text-white,
-.theme-light [class*="bg-gradient"] .text-white,
-.theme-light [class*="bg-gradient"].text-white,
-.theme-light [class*="badge"] .text-white,
-.theme-light [class*="badge"].text-white,
-.theme-light [class*="btn"] .text-white,
-.theme-light [class*="btn"].text-white {
+/*
+ * Белый текст возвращаем только там, где фон действительно цветной: элемент (или его предок)
+ * имеет сплошную цветную заливку или градиент. Сопоставление идёт по целому имени класса,
+ * поэтому полупрозрачные (bg-violet-500/10) и нейтральные (bg-slate-800) фоны сюда не попадают —
+ * раньше кнопка с серым фоном и классом text-white получала белый текст на светлом фоне.
+ */
+.theme-light :is(
+  [class~="bg-violet-650"], [class~="bg-violet-600"], [class~="bg-violet-500"],
+  [class~="bg-indigo-600"], [class~="bg-indigo-500"],
+  [class~="bg-blue-600"], [class~="bg-blue-500"],
+  [class~="bg-emerald-600"], [class~="bg-emerald-500"],
+  [class~="bg-red-600"], [class~="bg-red-500"],
+  [class~="bg-amber-600"], [class~="bg-amber-500"], [class~="bg-orange-500"],
+  [class~="bg-pink-600"], [class~="bg-pink-500"], [class~="bg-rose-500"],
+  [class~="bg-purple-500"], [class~="bg-cyan-500"], [class~="bg-teal-500"],
+  [class*="bg-gradient-to-"], [class*="bg-linear-to-"]
+).text-white,
+.theme-light :is(
+  [class~="bg-violet-650"], [class~="bg-violet-600"], [class~="bg-violet-500"],
+  [class~="bg-indigo-600"], [class~="bg-indigo-500"],
+  [class~="bg-blue-600"], [class~="bg-blue-500"],
+  [class~="bg-emerald-600"], [class~="bg-emerald-500"],
+  [class~="bg-red-600"], [class~="bg-red-500"],
+  [class~="bg-amber-600"], [class~="bg-amber-500"], [class~="bg-orange-500"],
+  [class~="bg-pink-600"], [class~="bg-pink-500"], [class~="bg-rose-500"],
+  [class~="bg-purple-500"], [class~="bg-cyan-500"], [class~="bg-teal-500"],
+  [class*="bg-gradient-to-"], [class*="bg-linear-to-"]
+) .text-white {
   color: #ffffff !important;
 }
 
+/* Элемент, который при наведении заливается цветом, получает белый текст */
+.theme-light :is(
+  [class~="hover:bg-violet-600"], [class~="hover:bg-violet-500"],
+  [class~="hover:bg-emerald-600"], [class~="hover:bg-emerald-500"],
+  [class~="hover:bg-red-600"], [class~="hover:bg-red-500"],
+  [class~="hover:bg-blue-600"], [class~="hover:bg-blue-500"]
+).hover\:text-white:hover {
+  color: #ffffff !important;
+}
+
+/* Поля ввода и списки */
 .theme-light select {
-  color: #1e293b !important;
+  color: var(--slate-200) !important;
   background-color: #ffffff !important;
-  border-color: #cbd5e1 !important;
+  border-color: #cdd4e3 !important;
+}
+
+/* Встроенные списки без рамки (смена должности в строке участника) остаются прозрачными */
+.theme-light select.bg-transparent {
+  background-color: transparent !important;
 }
 
 .theme-light select option {
-  color: #1e293b !important;
+  color: var(--slate-200) !important;
   background-color: #ffffff !important;
 }
 
 .theme-light select optgroup {
-  color: #475569 !important;
+  color: var(--slate-500) !important;
   background-color: #ffffff !important;
 }
 
 .theme-light input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
 .theme-light textarea {
-  color: #1e293b !important;
+  color: var(--slate-200) !important;
   background-color: #ffffff !important;
-  border-color: #cbd5e1 !important;
+  border-color: #cdd4e3 !important;
+}
+
+/* Раньше !important на рамке гасил подсветку фокуса */
+.theme-light input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):focus,
+.theme-light textarea:focus,
+.theme-light select:not(.bg-transparent):focus {
+  border-color: var(--violet-500) !important;
+  box-shadow: 0 0 0 3px rgba(124, 92, 240, 0.16);
+  outline: none;
 }
 
 .theme-light input::placeholder,
 .theme-light textarea::placeholder {
-  color: #94a3b8 !important;
+  color: #9aa3b7 !important;
+}
+
+.theme-light [role="dialog"][aria-label="ИИ-ассистент"] input::placeholder,
+.theme-light [role="dialog"][aria-label="ИИ-ассистент"] textarea::placeholder {
+  color: #667085 !important;
+  opacity: 1;
+}
+
+.theme-light [role="dialog"][aria-label="ИИ-ассистент"] [class~="text-amber-100"],
+.theme-light [role="dialog"][aria-label="ИИ-ассистент"] [class~="text-amber-200"],
+.theme-light [role="dialog"][aria-label="ИИ-ассистент"] [class~="text-amber-200/90"],
+.theme-light [role="dialog"][aria-label="ИИ-ассистент"] [class~="text-amber-300"],
+.theme-light [role="dialog"][aria-label="ИИ-ассистент"] [class~="text-amber-300/90"] {
+  color: #854d0e !important;
+}
+
+.theme-light [role="dialog"][aria-label="ИИ-ассистент"] [class~="text-red-200"] {
+  color: #a52328 !important;
+}
+
+.theme-light [role="dialog"][aria-label="ИИ-ассистент"] [class~="text-violet-200"],
+.theme-light [role="dialog"][aria-label="ИИ-ассистент"] [class~="text-violet-100"] {
+  color: #4c2ca8 !important;
+}
+
+.theme-light [role="dialog"][aria-label="ИИ-ассистент"] [class~="text-emerald-200"],
+.theme-light [role="dialog"][aria-label="ИИ-ассистент"] [class~="text-emerald-300"] {
+  color: #086b60 !important;
+}
+
+.assistant-panel-appear {
+  animation: assistant-panel-appear 180ms ease-out both;
+}
+
+@keyframes assistant-panel-appear {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assistant-panel-appear {
+    animation: none;
+  }
 }
 
 @media print {

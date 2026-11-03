@@ -1,196 +1,101 @@
-import { memo, useState } from 'react';
-import { Handle, Position } from 'reactflow';
+import { memo } from 'react';
+import { Handle, Position, useReactFlow } from 'reactflow';
 import type { NodeProps } from 'reactflow';
-import { 
-  Clock, User, ChevronDown, ChevronUp,
-  Edit2, Trash2, Copy
-} from 'lucide-react';
+import { Clock, User, Trash2, Copy, Timer, ListChecks, Link2, FastForward } from 'lucide-react';
 import { TASK_TYPE_CONFIG } from '../../types/workflowEditor';
 import type { TaskNodeData } from '../../types/workflowEditor';
+import { useAppContext } from '../../context/AppContext';
 
-const TaskNode = memo(({ data, selected }: NodeProps<TaskNodeData>) => {
-  const [expanded, setExpanded] = useState(false);
-  const config = TASK_TYPE_CONFIG[data.taskType];
-  
-  const priorityColors = {
-    LOW: 'border-slate-500',
-    MEDIUM: 'border-blue-400',
-    HIGH: 'border-amber-400',
-    URGENT: 'border-red-500',
-  };
+const PRIORITY_BORDER: Record<TaskNodeData['priority'], string> = {
+  LOW: 'border-slate-600',
+  MEDIUM: 'border-blue-400/60',
+  HIGH: 'border-amber-400/70',
+  URGENT: 'border-red-500/80',
+};
+
+const PRIORITY_DOT: Record<TaskNodeData['priority'], string> = {
+  LOW: 'bg-slate-500',
+  MEDIUM: 'bg-blue-500',
+  HIGH: 'bg-amber-500',
+  URGENT: 'bg-red-500',
+};
+
+const PRIORITY_LABEL: Record<TaskNodeData['priority'], string> = {
+  LOW: 'Низкий', MEDIUM: 'Средний', HIGH: 'Высокий', URGENT: 'Срочный',
+};
+
+/**
+ * Карточка задачи на схеме шаблона. Только показывает данные: правка — в панели «Свойства задачи»
+ * справа (она открывается по клику на карточку).
+ */
+const TaskNode = memo(({ id, data, selected, xPos, yPos }: NodeProps<TaskNodeData>) => {
+  const { metadata } = useAppContext();
+  const { deleteElements, addNodes } = useReactFlow();
+  const config = TASK_TYPE_CONFIG[data.taskType] ?? TASK_TYPE_CONFIG.TEXT_REPORT;
+  const roleName = data.assignedRole ? (metadata?.roles?.[data.assignedRole] ?? data.assignedRole) : null;
+  const checklistSize = (data.checklist ?? []).filter(item => item.trim()).length;
+
+  const duplicate = () => addNodes({
+    id: `node_${Date.now()}`,
+    type: 'taskNode',
+    position: { x: xPos + 40, y: yPos + 60 },
+    data: { ...data, label: `${data.label} (копия)` },
+  });
 
   return (
-    <div 
-      className={`
-        relative bg-slate-800 border-2 rounded-xl min-w-[250px] max-w-[350px]
-        transition-all duration-200 cursor-grab active:cursor-grabbing
-        ${selected ? 'border-violet-500 shadow-lg shadow-violet-500/20' : 'border-slate-700'}
-        ${priorityColors[data.priority]}
-        hover:border-slate-600
-      `}
+    <div
+      className={`group relative bg-slate-800 border-2 rounded-xl w-[260px] transition-shadow cursor-grab active:cursor-grabbing ${
+        selected ? 'border-violet-500 shadow-lg shadow-violet-500/20' : PRIORITY_BORDER[data.priority]
+      }`}
     >
-      {/* Priority indicator */}
-      <div className={`absolute top-0 left-0 w-full h-1 rounded-t-xl ${
-        data.priority === 'URGENT' ? 'bg-red-500' :
-        data.priority === 'HIGH' ? 'bg-amber-500' :
-        data.priority === 'MEDIUM' ? 'bg-blue-500' :
-        'bg-slate-600'
-      }`} />
-
-      {/* Input handle */}
       <Handle
-        type="target"
-        position={Position.Top}
+        type="target" position={Position.Top}
         className="!bg-slate-600 !w-3 !h-3 !border-2 !border-slate-400 hover:!bg-violet-500"
       />
 
-      <div className="p-4">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <span className="text-lg">{config.icon}</span>
-            <span 
-              className="text-[10px] font-bold px-2 py-0.5 rounded"
-              style={{ backgroundColor: config.color + '20', color: config.color }}
-            >
-              {config.label}
-            </span>
-          </div>
-          
-          <div className="flex items-center gap-1 opacity-0 hover:opacity-100 transition-opacity">
-            <button className="p-1 text-slate-500 hover:text-white rounded">
-              <Edit2 size={12} />
-            </button>
-            <button className="p-1 text-slate-500 hover:text-red-400 rounded">
-              <Trash2 size={12} />
-            </button>
-            <button className="p-1 text-slate-500 hover:text-white rounded">
+      <div className="p-3.5">
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider" style={{ color: config.color }}>
+            <span className="text-sm">{config.icon}</span> {config.label}
+          </span>
+          <span className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity nodrag">
+            <button onClick={e => { e.stopPropagation(); duplicate(); }} className="p-1 text-slate-500 hover:text-white rounded" title="Дублировать задачу" aria-label="Дублировать задачу">
               <Copy size={12} />
             </button>
-          </div>
+            <button onClick={e => { e.stopPropagation(); deleteElements({ nodes: [{ id }] }); }} className="p-1 text-slate-500 hover:text-red-400 rounded" title="Удалить задачу" aria-label="Удалить задачу">
+              <Trash2 size={12} />
+            </button>
+          </span>
         </div>
 
-        {/* Task name */}
-        <div className="mb-3">
-          <input
-            type="text"
-            defaultValue={data.label}
-            className="w-full bg-transparent text-sm font-bold text-white border-none outline-none focus:ring-1 focus:ring-violet-500 rounded px-1 py-0.5"
-            placeholder="Название задачи"
-            onClick={e => e.stopPropagation()}
-          />
-        </div>
+        <p className={`text-sm font-bold leading-snug break-words ${data.label?.trim() ? 'text-white' : 'text-red-400'}`}>
+          {data.label?.trim() || 'Без названия'}
+        </p>
+        {data.description && <p className="text-[11px] text-slate-400 mt-1 line-clamp-2">{data.description}</p>}
 
-        {/* Task details */}
-        <div className="flex items-center gap-3 text-[10px] text-slate-400 mb-2">
-          <div className="flex items-center gap-1">
-            <Clock size={10} />
-            <span>{data.slaHours}ч SLA</span>
-          </div>
-          
-          {data.assignedRole && (
-            <div className="flex items-center gap-1">
-              <User size={10} />
-              <span>{data.assignedRole}</span>
-            </div>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-400 mt-2.5">
+          <span className="flex items-center gap-1" title="Срок выполнения после старта задачи"><Clock size={10} /> {data.slaHours} ч</span>
+          {(data.estimatedHours ?? 0) > 0 && (
+            <span className="flex items-center gap-1" title="Трудозатраты"><Timer size={10} /> {data.estimatedHours} ч работы</span>
           )}
+          <span className="flex items-center gap-1" title={`Приоритет: ${PRIORITY_LABEL[data.priority]}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${PRIORITY_DOT[data.priority]}`} /> {PRIORITY_LABEL[data.priority]}
+          </span>
+          {roleName && <span className="flex items-center gap-1" title="Роль исполнителя"><User size={10} /> {roleName}</span>}
+          {data.taskType === 'CHECKLIST' && (
+            <span className={`flex items-center gap-1 ${checklistSize === 0 ? 'text-amber-400' : ''}`}><ListChecks size={10} /> пунктов: {checklistSize}</span>
+          )}
+          {data.taskType === 'INTEGRATION' && (
+            <span className={`flex items-center gap-1 ${data.integrationUrl?.trim() ? '' : 'text-amber-400'}`}>
+              <Link2 size={10} /> {data.integrationUrl?.trim() ? 'вебхук задан' : 'без вебхука'}
+            </span>
+          )}
+          {data.autoApprove && <span className="flex items-center gap-1 text-emerald-400" title="Закрывается без проверки менеджером"><FastForward size={10} /> без проверки</span>}
         </div>
-
-        {/* Expand button */}
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            setExpanded(!expanded);
-          }}
-          className="w-full flex items-center justify-center gap-1 text-[10px] text-slate-500 hover:text-slate-300 mt-2"
-        >
-          {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-          {expanded ? 'Свернуть' : 'Подробнее'}
-        </button>
-
-        {/* Expanded details */}
-        {expanded && (
-          <div className="mt-3 pt-3 border-t border-slate-700 space-y-3">
-            {/* Description */}
-            <div>
-              <label className="text-[10px] text-slate-500 font-bold uppercase mb-1 block">Описание</label>
-              <textarea
-                defaultValue={data.description}
-                className="w-full bg-slate-900 border border-slate-700 text-slate-300 text-xs rounded-lg p-2 outline-none focus:border-violet-500 resize-none"
-                rows={2}
-                placeholder="Описание задачи..."
-                onClick={e => e.stopPropagation()}
-              />
-            </div>
-
-            {/* SLA */}
-            <div>
-              <label className="text-[10px] text-slate-500 font-bold uppercase mb-1 block">SLA (часы)</label>
-              <input
-                type="number"
-                defaultValue={data.slaHours}
-                className="w-20 bg-slate-900 border border-slate-700 text-white text-xs rounded-lg px-2 py-1 outline-none focus:border-violet-500"
-                onClick={e => e.stopPropagation()}
-              />
-            </div>
-
-            {/* Priority */}
-            <div>
-              <label className="text-[10px] text-slate-500 font-bold uppercase mb-1 block">Приоритет</label>
-              <select
-                defaultValue={data.priority}
-                className="w-full bg-slate-900 border border-slate-700 text-white text-xs rounded-lg px-2 py-1 outline-none focus:border-violet-500"
-                onClick={e => e.stopPropagation()}
-              >
-                <option value="LOW">Низкий</option>
-                <option value="MEDIUM">Средний</option>
-                <option value="HIGH">Высокий</option>
-                <option value="URGENT">Срочный</option>
-              </select>
-            </div>
-
-            {/* Checklist (for CHECKLIST type) */}
-            {data.taskType === 'CHECKLIST' && (
-              <div>
-                <label className="text-[10px] text-slate-500 font-bold uppercase mb-1 block">Чек-лист</label>
-                {data.checklist?.map((item, idx) => (
-                  <div key={idx} className="flex items-center gap-2 mb-1">
-                    <input
-                      type="text"
-                      defaultValue={item}
-                      className="flex-1 bg-slate-900 border border-slate-700 text-slate-300 text-xs rounded px-2 py-1 outline-none"
-                      onClick={e => e.stopPropagation()}
-                    />
-                    <button className="text-red-400 hover:text-red-300">×</button>
-                  </div>
-                ))}
-                <button className="text-[10px] text-violet-400 hover:text-violet-300 mt-1">
-                  + Добавить пункт
-                </button>
-              </div>
-            )}
-
-            {/* Integration URL (for INTEGRATION type) */}
-            {data.taskType === 'INTEGRATION' && (
-              <div>
-                <label className="text-[10px] text-slate-500 font-bold uppercase mb-1 block">Webhook URL</label>
-                <input
-                  type="url"
-                  defaultValue={data.integrationUrl}
-                  className="w-full bg-slate-900 border border-slate-700 text-white text-xs rounded-lg px-2 py-1 outline-none focus:border-violet-500"
-                  placeholder="https://..."
-                  onClick={e => e.stopPropagation()}
-                />
-              </div>
-            )}
-          </div>
-        )}
       </div>
 
-      {/* Output handle */}
       <Handle
-        type="source"
-        position={Position.Bottom}
+        type="source" position={Position.Bottom}
         className="!bg-slate-600 !w-3 !h-3 !border-2 !border-slate-400 hover:!bg-violet-500"
       />
     </div>

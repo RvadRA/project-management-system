@@ -1,0 +1,68 @@
+{
+  "catalog": {
+    "domains": [
+      "EdTech",
+      "GameDev",
+      "GovTech",
+      "HealthTech",
+      "IT Infrastructure",
+      "Retail"
+    ],
+    "skills": [
+      "Python",
+      "Django",
+      "FastAPI",
+      "PostgreSQL",
+      "Redis",
+      "React",
+      "TypeScript",
+      "CSS/SASS",
+      "SQL",
+      "Pandas",
+      "Power BI",
+      "Docker",
+      "Kubernetes",
+      "CI/CD",
+      "Figma",
+      "UX Research",
+      "Project Management",
+      "Agile/Scrum"
+    ]
+  },
+  "counts": {
+    "employees": 30,
+    "tasks": 300
+  },
+  "dataset_id": "synthetic_seed42",
+  "dataset_version": "synthetic-v1",
+  "embedding_default": "deterministic hashing vectors (synthetic_vectors=true), not Ollama",
+  "files": {
+    "dataset_sha256": "eb4d21ab4e94d38d9fa73e516d9cf320451b14e1d566328f6e83404b9c589aca",
+    "employees": "employees.jsonl",
+    "employees_sha256": "1d51efde92009dd5d0e7206d65508066562f4abce88a89f370a69c8a8b3e2f0a",
+    "tasks": "tasks.jsonl",
+    "tasks_sha256": "cd22a384306e9512260732178ca9b68730e4ec8deda95b2e0413bb928ecc4f47"
+  },
+  "generator": "matching.experiments.generator:v1",
+  "scenario_counts": {
+    "ambiguous_competition": 55,
+    "high_load": 25,
+    "incomplete_data": 25,
+    "missing_skills": 35,
+    "no_suitable_candidate": 10,
+    "standard": 150
+  },
+  "seed": 42,
+  "skill_min_level": 2,
+  "synthetic": true,
+  "target_rules": {
+    "ambiguous_competition": "the target is sampled below the top of the latent shortlist when possible",
+    "base": "the target satisfies every required skill at level 2+ and has availability > 0",
+    "high_load": "the target is not one of the five permanently high-load employees",
+    "incomplete_data": "the target may have no rate or no workload records; unknown load is neutral",
+    "no_suitable_candidate": "no target is assigned; no employee has all required skills at level 2+",
+    "no_suitable_metrics": "tasks without a target are excluded from Top-1/Top-3/MRR/NDCG",
+    "target_selection": "qualified candidates are ranked by a hidden latent preference (skills, domain, availability, quality, cost) plus noise; the target is sampled from the top-5, not forced to be the rule top-1"
+  },
+  "unknown_workload_policy": "neutral 0.5 in the experiment rule baseline"
+}

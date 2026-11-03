@@ -23,7 +23,9 @@ from .serializers import (
     TaskSerializer, TaskDependencySerializer, AuditLogSerializer, GlobalSettingSerializer,
     KnowledgeMaterialSerializer, can_edit_material,
 )
-from .services import PlanningImportService
+from .services import (
+    PlanningImportService, auto_allocation, default_allocation_period, employee_capacity, sync_workload_entry,
+)
 
 User = get_user_model()
 
@@ -47,6 +49,15 @@ def _parse_scaling_factor(data):
     if factor <= 0:
         raise ValidationError({'scaling_factor': 'Коэффициент масштабирования должен быть больше 0.'})
     return factor
+
+
+def _parse_date(value, field):
+    if value in (None, ''):
+        return None
+    try:
+        return datetime.date.fromisoformat(str(value))
+    except ValueError:
+        raise ValidationError({field: 'Дата должна быть в формате ГГГГ-ММ-ДД.'})
 
 
 def _require_block_edit(user, block):
@@ -120,11 +131,12 @@ class KnowledgeMaterialViewSet(viewsets.ModelViewSet):
         material = self.get_object()
         if not material.file:
             return Response({'error': 'К материалу не прикреплён файл.'}, status=status.HTTP_404_NOT_FOUND)
+        from config.uploads import file_response
         try:
-            handle = material.file.open('rb')
+            # ?inline=1 — показать картинку в интерфейсе; остальное всегда отдаётся как вложение
+            return file_response(material.file, inline_image=request.query_params.get('inline') == '1')
         except FileNotFoundError:
             return Response({'error': 'Файл не найден в хранилище.'}, status=status.HTTP_404_NOT_FOUND)
-        return FileResponse(handle, as_attachment=True, filename=os.path.basename(material.file.name))
 
 
 class ProjectViewSet(viewsets.ModelViewSet):
@@ -164,25 +176,8 @@ class ProjectViewSet(viewsets.ModelViewSet):
         self._sync_workload_entry(project, user, member.allocation_percentage)
         return member
 
-    def _sync_workload_entry(self, project, user, allocation):
-        from matching.models import WorkloadEntry, EmployeeProfile
-        try:
-            profile = EmployeeProfile.objects.get(user=user)
-            # Use filter().first() and manual update/create to avoid MultipleObjectsReturned (500 error)
-            entry = WorkloadEntry.objects.filter(employee=profile, project=project).first()
-            defaults = {
-                'start_date': project.start_date or timezone.now().date(),
-                'end_date': project.end_date or (timezone.now().date() + timedelta(days=90)),
-                'load_percent': allocation
-            }
-            if entry:
-                for k, v in defaults.items():
-                    setattr(entry, k, v)
-                entry.save()
-            else:
-                WorkloadEntry.objects.create(employee=profile, project=project, **defaults)
-        except EmployeeProfile.DoesNotExist:
-            pass
+    def _sync_workload_entry(self, project, user, allocation, start=None, end=None):
+        sync_workload_entry(project, user, allocation, start, end)
 
     # ── CRUD ─────────────────────────────────────────────────────────────────
 
@@ -282,7 +277,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
         except (User.DoesNotExist, ValueError, TypeError):
             return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
 
-        role = request.data.get('role') or 'DEVELOPER'
+        role = str(request.data.get('role') or 'DEVELOPER')[:30]  # CharField(max_length=30)
         role_ref = None
         role_ref_id = request.data.get('role_ref_id')
         if role_ref_id:
@@ -301,9 +296,9 @@ class ProjectViewSet(viewsets.ModelViewSet):
         elif existing_member:
             allocation = existing_member.allocation_percentage
         else:
-            allocation = 100
+            allocation = None   # новый участник без указанной загрузки — берём свободное время сотрудника
 
-        if not 0 < allocation <= 100:
+        if allocation is not None and not 0 < allocation <= 100:
             return Response({'error': 'Загрузка на проект должна быть от 1 до 100%'}, status=status.HTTP_400_BAD_REQUEST)
 
         # Роль «Project Manager» из справочника приравнивается к менеджеру проекта.
@@ -316,22 +311,40 @@ class ProjectViewSet(viewsets.ModelViewSet):
         if is_pm_role or (existing_member and existing_member.is_manager):
             require_project_manager(request.user, project, "Назначать менеджеров может только менеджер проекта.")
 
-        # Проверка лимита загрузки (100%)
-        from matching.models import EmployeeProfile
-        from django.db.models import Sum
-        profile = EmployeeProfile.objects.filter(user=target_user).first()
-        if profile:
-            today = datetime.date.today()
-            current_load = profile.workload_entries.filter(
-                start_date__lte=today, end_date__gte=today
-            ).exclude(project=project).aggregate(total=Sum('load_percent'))['total'] or 0
+        # Период загрузки: явный, либо прежний (у существующего участника), либо сроки проекта
+        from matching.models import WorkloadEntry
+        from matching.services import ensure_profile
+        start = _parse_date(request.data.get('start_date'), 'start_date')
+        end = _parse_date(request.data.get('end_date'), 'end_date')
+        profile = ensure_profile(target_user)
+        old_entry = WorkloadEntry.objects.filter(employee=profile, project=project).first()
+        period_start = start or (old_entry.start_date if old_entry else default_allocation_period(project)[0])
+        period_end = end or (old_entry.end_date if old_entry else default_allocation_period(project)[1])
+        if period_end < period_start:
+            return Response({'error': 'Дата окончания не может быть раньше даты начала.'}, status=status.HTTP_400_BAD_REQUEST)
 
-            if current_load + allocation > 100:
-                # Если это обновление и нагрузка не увеличилась, разрешаем смену роли/данных
-                if not (existing_member and allocation <= existing_member.allocation_percentage):
-                    return Response({
-                        'error': f'Превышение загрузки сотрудника (занято {current_load}%, требуется {allocation}%). Максимум 100%.'
-                    }, status=status.HTTP_400_BAD_REQUEST)
+        # Проверка лимита загрузки (100%) по самому занятому дню периода, а не только по сегодняшнему
+        cap = employee_capacity(profile, project, period_start, period_end)
+        if allocation is None:
+            allocation = int(min(100, (cap['free_percent'] // 5) * 5))
+            if allocation <= 0:
+                return Response({
+                    'error': (
+                        f"В период {period_start:%d.%m.%Y} – {period_end:%d.%m.%Y} сотрудник полностью занят "
+                        f"(пик {cap['peak_load_percent']:.0f}%) — добавить его в команду нельзя."
+                    )
+                }, status=status.HTTP_400_BAD_REQUEST)
+        increases_load = (
+            not existing_member or allocation > existing_member.allocation_percentage or bool(start) or bool(end)
+        )
+        if allocation > cap['free_percent'] and increases_load:
+            return Response({
+                'error': (
+                    f"Превышение загрузки сотрудника: в период {period_start:%d.%m.%Y} – {period_end:%d.%m.%Y} "
+                    f"в самые занятые дни он занят на {cap['peak_load_percent']:.0f}%, свободно {cap['free_percent']:.0f}%, "
+                    f"а требуется {allocation}%. Максимум 100%."
+                )
+            }, status=status.HTTP_400_BAD_REQUEST)
 
         member, created = ProjectMember.objects.update_or_create(
             project=project, user=target_user,
@@ -345,7 +358,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
             # Ответственного менеджера разжаловали — передаём ответственность другому менеджеру
             self._reassign_primary_manager(project, exclude_user=target_user)
 
-        self._sync_workload_entry(project, target_user, allocation)
+        self._sync_workload_entry(project, target_user, allocation, start, end)
 
         log_role = role_ref.name if role_ref else role
         if created:
@@ -358,8 +371,132 @@ class ProjectViewSet(viewsets.ModelViewSet):
             )
 
         _log(project, request.user, 'MEMBER_ADDED' if created else 'MEMBER_UPDATED',
-             {'user_id': target_user.id, 'role': log_role, 'role_ref': role_ref_id, 'allocation': allocation})
+             {'user_id': target_user.id, 'role': log_role, 'role_ref': role_ref_id, 'allocation': allocation,
+              'period': f'{period_start}..{period_end}'})
         return Response(ProjectMemberSerializer(member).data, status=status.HTTP_201_CREATED)
+
+    # ── Загрузка: свободное время и рекомендация ─────────────────────────────
+
+    @action(detail=True, methods=['get'], url_path='capacity')
+    def capacity(self, request, pk=None):
+        """
+        GET /projects/list/{id}/capacity/?user_id=5&start=2026-11-01&end=2026-12-31
+
+        Как определить «Загрузку на этот проект (%)»: сколько у сотрудника свободно в период,
+        сколько часов это даёт и какая загрузка нужна под его назначенные задачи проекта.
+        """
+        from matching.capacity import hours_to_percent, percent_to_hours
+        from matching.services import ensure_profile
+        from workflows.models import WorkflowTask
+
+        project = self.get_object()
+        require_project_perm(request.user, project, 'can_manage_members', "У вас нет прав управлять командой проекта.")
+        try:
+            target = User.objects.get(id=request.query_params.get('user_id'))
+        except (User.DoesNotExist, ValueError, TypeError):
+            return Response({'error': 'user_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        default_start, default_end = default_allocation_period(project)
+        start = _parse_date(request.query_params.get('start'), 'start') or default_start
+        end = _parse_date(request.query_params.get('end'), 'end') or default_end
+        if end < start:
+            return Response({'error': 'Дата окончания не может быть раньше даты начала.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        profile = ensure_profile(target)
+        cap = employee_capacity(profile, project, start, end)
+
+        member = ProjectMember.objects.filter(project=project, user=target).first()
+        # Трудозатраты уже назначенных на сотрудника открытых задач проекта (плана и процессов)
+        open_wbs = Task.objects.filter(block__project=project, assigned_to=target).exclude(status='DONE')
+        open_wf = WorkflowTask.objects.filter(workflow__project=project, assigned_to=target).exclude(status='DONE')
+        assigned_hours = round(
+            sum(t.estimated_hours or 0 for t in open_wbs) + sum(t.estimated_hours or 0 for t in open_wf), 1
+        )
+        unestimated = open_wbs.filter(estimated_hours__lte=0).count() + open_wf.filter(estimated_hours__lte=0).count()
+        from_tasks = hours_to_percent(assigned_hours, cap['available_hours']) if assigned_hours else None
+
+        free = cap['free_percent']
+        # Под задачи — сколько нужно, но не больше свободного; без оценок — всё свободное время
+        recommended = min(free, from_tasks) if from_tasks is not None else free
+        recommended = float((recommended // 5) * 5) if recommended >= 5 else 0.0
+        return Response({
+            **cap,
+            'start': start, 'end': end,
+            'current_percent': member.allocation_percentage if member else None,
+            'assigned_hours': assigned_hours,
+            'unestimated_tasks': unestimated,
+            'from_tasks_percent': from_tasks,
+            'recommended_percent': recommended,
+            'free_hours': percent_to_hours(free, cap['available_hours']),
+        })
+
+    # ── Оценка участников по итогам проекта ──────────────────────────────────
+
+    def _ratings_payload(self, project):
+        from matching.services import sync_project_participations
+        sync_project_participations(project)
+        rows = []
+        participations = {
+            p.employee.user_id: p
+            for p in project.participations_qs().select_related('employee__user', 'rated_by')
+        }
+        for member in project.members.select_related('user', 'role_ref'):
+            part = participations.get(member.user_id)
+            score = part.performance_score if part and part.performance_score > 0 else None
+            rows.append({
+                'user_id': member.user_id,
+                'full_name': member.user.get_full_name() or member.user.username,
+                'position': 'Менеджер проекта' if member.is_manager else (member.role_ref.name if member.role_ref else member.role),
+                'stars': round(score * 5) if score else None,
+                'comment': part.comment if part else '',
+                'rated_at': part.rated_at if part else None,
+                'rated_by': (part.rated_by.get_full_name() or part.rated_by.username) if part and part.rated_by else None,
+            })
+        return rows
+
+    @action(detail=True, methods=['get', 'post'], url_path='ratings')
+    def ratings(self, request, pk=None):
+        """
+        GET  /projects/list/{id}/ratings/ — участники и их оценки;
+        POST {"ratings": [{"user_id": 5, "stars": 4, "comment": "..."}]} — выставить оценки 1–5.
+        Оценки по итогам проекта учитываются в подборе команды (компонент «Результативность»).
+        """
+        from matching.models import ProjectParticipation
+        project = self.get_object()
+        require_project_manager(request.user, project, "Оценивать участников может только менеджер проекта.")
+
+        if request.method == 'GET':
+            return Response({'project_status': project.status, 'ratings': self._ratings_payload(project)})
+
+        if project.status != 'COMPLETED':
+            return Response({'error': 'Оценить команду можно после завершения проекта.'}, status=status.HTTP_400_BAD_REQUEST)
+        items = request.data.get('ratings')
+        if not isinstance(items, list) or not items:
+            return Response({'error': 'ratings must be a non-empty list'}, status=status.HTTP_400_BAD_REQUEST)
+
+        self._ratings_payload(project)   # гарантирует, что записи участия созданы
+        saved = 0
+        for item in items:
+            try:
+                user_id = int(item.get('user_id'))
+                stars = int(item.get('stars'))
+            except (AttributeError, TypeError, ValueError):
+                return Response({'error': 'Для каждого участника нужны user_id и stars (1–5).'}, status=status.HTTP_400_BAD_REQUEST)
+            if not 1 <= stars <= 5:
+                return Response({'error': 'Оценка должна быть от 1 до 5.'}, status=status.HTTP_400_BAD_REQUEST)
+            if user_id == request.user.id:
+                return Response({'error': 'Нельзя оценивать себя.'}, status=status.HTTP_400_BAD_REQUEST)
+            part = ProjectParticipation.objects.filter(project=project, employee__user_id=user_id).first()
+            if part is None:
+                return Response({'error': f'Пользователь {user_id} не участвовал в проекте.'}, status=status.HTTP_400_BAD_REQUEST)
+            part.performance_score = stars / 5
+            part.comment = str(item.get('comment') or '').strip()[:1000]
+            part.rated_by = request.user
+            part.rated_at = timezone.now()
+            part.save()
+            saved += 1
+        _log(project, request.user, 'TEAM_RATED', {'count': saved})
+        return Response({'saved': saved, 'ratings': self._ratings_payload(project)})
 
     @action(detail=True, methods=['post'], url_path='members/permissions')
     def set_member_permissions(self, request, pk=None):
@@ -654,54 +791,9 @@ class PlanningBlockViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Блок уже является шаблоном.'}, status=400)
         require_project_perm(request.user, block.project, 'can_view_all_tasks')
 
-        template_name = request.data.get('name') or f"Шаблон: {block.name}"
-
-        # Manually cloning here to avoid service edit issues for now
-        new_template = PlanningBlock.objects.create(
-            name=template_name,
-            domain=block.domain,
-            is_template=True,
-            project=None,
-            parent=None,
-            order=0,
-            process_template=block.process_template,
-            calendar=block.calendar,
-            avg_duration=block.avg_duration,
-            complexity=block.complexity,
-            success_rate=block.success_rate,
-        )
-        new_template.typical_risks.set(block.typical_risks.all())
-
-        old_to_new_task_map = {}
-        for t_task in block.tasks.all():
-            new_task = Task.objects.create(
-                block=new_template,
-                name=t_task.name,
-                description=t_task.description,
-                duration_days=t_task.duration_days,
-                start_offset_days=t_task.start_offset_days,
-                status='TODO',
-                weight=t_task.weight,
-                priority=t_task.priority,
-                estimated_hours=t_task.estimated_hours,
-                risk_level=t_task.risk_level,
-                order=t_task.order,
-                process_template=t_task.process_template
-            )
-            from plans.models import TaskRequiredRole
-            for rr in t_task.required_roles.all():
-                TaskRequiredRole.objects.create(task=new_task, role=rr.role)
-            old_to_new_task_map[t_task.id] = new_task
-
-        for t_task in block.tasks.all():
-            for dep in t_task.outgoing_dependencies.all():
-                if dep.to_task_id in old_to_new_task_map:
-                    TaskDependency.objects.create(
-                        from_task=old_to_new_task_map[t_task.id],
-                        to_task=old_to_new_task_map[dep.to_task_id],
-                        type=dep.type,
-                    )
-
+        template_name = (request.data.get('name') or '').strip() or f"Шаблон: {block.name}"
+        new_template = PlanningImportService.save_block_as_template(block, template_name)
+        _log(block.project, request.user, 'PLANNING_SAVED_AS_TEMPLATE', {'block': block.name, 'template': template_name})
         return Response(self.get_serializer(new_template).data, status=status.HTTP_201_CREATED)
 
 
@@ -942,7 +1034,7 @@ class TaskViewSet(viewsets.ModelViewSet):
         except (User.DoesNotExist, ValueError, TypeError):
             return Response({'error': 'User not found'}, status=404)
 
-        role = request.data.get('role') or 'DEVELOPER'
+        role = str(request.data.get('role') or 'DEVELOPER')[:30]  # CharField(max_length=30)
         role_ref_id = request.data.get('role_ref_id')
         allocation = request.data.get('allocation_percentage')
 
@@ -1056,56 +1148,134 @@ class TaskDependencyViewSet(viewsets.ModelViewSet):
 
 
 class AnalyticsViewSet(viewsets.ViewSet):
+    """
+    GET /projects/dashboard/?days=30|90|180|365
+
+    Все цифры считаются по проектам, к которым у пользователя есть доступ:
+    администратор и руководитель проектов видят всё, менеджер — свои проекты.
+    """
     permission_classes = [IsAuthenticated]
+    ALLOWED_PERIODS = (30, 90, 180, 365)
+
+    @staticmethod
+    def _trend(workflow_tasks, days):
+        """
+        План / факт по задачам процессов за период: план — задачи со сроком в этот день,
+        факт — задачи, завершённые в этот день. Для периодов длиннее месяца точки — недели.
+        """
+        today = timezone.now().date()
+        first = today - timedelta(days=days - 1)
+        step = 1 if days <= 31 else 7
+        buckets = []
+        day = first
+        while day <= today:
+            buckets.append((day, min(day + timedelta(days=step - 1), today)))
+            day += timedelta(days=step)
+
+        planned_dates = list(workflow_tasks.filter(
+            due_date__date__gte=first, due_date__date__lte=today,
+        ).values_list('due_date', flat=True))
+        done_dates = list(workflow_tasks.filter(
+            status='DONE', completed_at__date__gte=first, completed_at__date__lte=today,
+        ).values_list('completed_at', flat=True))
+        planned_days = [d.date() for d in planned_dates]
+        done_days = [d.date() for d in done_dates]
+
+        trend = []
+        for start, end in buckets:
+            label = start.strftime('%d.%m') if step == 1 else f"{start:%d.%m}–{end:%d.%m}"
+            trend.append({
+                'period': label,
+                'planned': sum(1 for d in planned_days if start <= d <= end),
+                'actual': sum(1 for d in done_days if start <= d <= end),
+            })
+        return trend
 
     def list(self, request):
-        from matching.models import EmployeeProfile
+        from django.db.models import F, FloatField, Sum
+        from django.db.models.expressions import Case, Value, When
+        from matching.capacity import INACTIVE_PROJECT_STATUSES
+        from matching.models import EmployeeProfile, WorkloadEntry
         from workflows.models import WorkflowTask
         user = request.user
+        try:
+            days = int(request.query_params.get('days', 30))
+        except (TypeError, ValueError):
+            days = 30
+        if days not in self.ALLOWED_PERIODS:
+            days = 30
+
         if not access.can_view_staff(user):
             return Response({
-                'kpis': {'total_projects': 0, 'active_projects': 0, 'total_employees': 0, 'avg_progress': 0},
+                'kpis': {'total_projects': 0, 'active_projects': 0, 'total_employees': 0, 'avg_progress': 0,
+                         'tasks_total': 0, 'tasks_done': 0, 'tasks_overdue': 0},
                 'domain_stats': [],
-                'performance_trend': []
+                'performance_trend': [],
+                'period': {'days': days},
             })
 
         # Менеджер проекта видит аналитику только по своим проектам
         projects = Project.objects.all()
         workflow_tasks = WorkflowTask.objects.all()
-        profiles = EmployeeProfile.objects.all()
+        profiles = EmployeeProfile.objects.filter(user__is_active=True).exclude(user__role='ADMIN')
         if not access.has_global_access(user):
             managed_ids = list(access.managed_project_ids(user))
             projects = projects.filter(id__in=managed_ids)
             workflow_tasks = workflow_tasks.filter(workflow__project_id__in=managed_ids)
             profiles = profiles.filter(user__project_memberships__project_id__in=managed_ids).distinct()
 
-        total_projects = projects.count()
-        active_projects = projects.filter(status__in=['ACTIVE', 'AT_RISK']).count()
-        total_employees = profiles.count()
-        total_tasks_count = workflow_tasks.count()
-        done_tasks_count = workflow_tasks.filter(status='DONE').count()
-        avg_progress = round((done_tasks_count / total_tasks_count * 100)) if total_tasks_count > 0 else 0
-
-        domain_stats = EmployeeProfile.objects.filter(id__in=profiles.values('id')).values('domain').annotate(
-            avg_load=Avg('workload_entries__load_percent'),
-            emp_count=Count('id', distinct=True)
+        # Прогресс считается так же, как в карточке проекта: задачи со статусом «на проверке» — 80%, «в работе» — 50%
+        progress = Case(
+            When(status='DONE', then=Value(1.0)),
+            When(status='REVIEW', then=Value(0.8)),
+            When(status='IN_PROGRESS', then=Value(0.5)),
+            default=Value(0.0), output_field=FloatField(),
         )
+        scoped_tasks = workflow_tasks.filter(workflow__project__in=projects)
+        total_weight = scoped_tasks.aggregate(s=Sum('weight'))['s'] or 0
+        done_weight = scoped_tasks.annotate(p=progress).aggregate(s=Sum(F('weight') * F('p')))['s'] or 0
+        avg_progress = round(done_weight / total_weight * 100) if total_weight else 0
 
-        today = timezone.now().date()
-        performance_trend = []
-        for i in range(29, -1, -1):
-            date = today - timedelta(days=i)
-            actual = workflow_tasks.filter(status='DONE', completed_at__date=date).count()
-            planned = workflow_tasks.filter(due_date__date=date).count()
-            performance_trend.append({'period': date.strftime('%d.%m'), 'planned': planned, 'actual': actual})
+        now = timezone.now()
+        tasks_overdue = scoped_tasks.filter(
+            Q(status='ESCALATED') | (Q(due_date__lt=now) & ~Q(status__in=['DONE', 'REVIEW', 'TODO']))
+        ).count()
+
+        # Загрузка по доменам: средняя текущая занятость СОТРУДНИКОВ домена, включая свободных
+        # (раньше усреднялись все записи за всё время и сотрудники без загрузки не учитывались)
+        today = datetime.date.today()
+        load_by_profile = dict(
+            WorkloadEntry.objects.filter(start_date__lte=today, end_date__gte=today)
+            .exclude(project__status__in=INACTIVE_PROJECT_STATUSES)
+            .values_list('employee_id').annotate(total=Sum('load_percent'))
+        )
+        domains = {}
+        for profile in profiles:
+            row = domains.setdefault(profile.domain or '', {'domain': profile.domain or '', 'emp_count': 0, 'total': 0, 'overloaded': 0, 'free': 0})
+            load = float(load_by_profile.get(profile.id, 0) or 0)
+            row['emp_count'] += 1
+            row['total'] += load
+            row['overloaded'] += 1 if load > 90 else 0
+            row['free'] += 1 if load < 50 else 0
+        domain_stats = [
+            {
+                'domain': r['domain'], 'emp_count': r['emp_count'], 'avg_load': round(r['total'] / r['emp_count'], 1),
+                'overloaded': r['overloaded'], 'free': r['free'],
+            }
+            for r in sorted(domains.values(), key=lambda r: r['domain'])
+        ]
 
         return Response({
             'kpis': {
-                'total_projects': total_projects,
-                'active_projects': active_projects,
-                'total_employees': total_employees,
+                'total_projects': projects.count(),
+                'active_projects': projects.filter(status__in=['ACTIVE', 'AT_RISK']).count(),
+                'total_employees': profiles.count(),
                 'avg_progress': avg_progress,
+                'tasks_total': scoped_tasks.count(),
+                'tasks_done': scoped_tasks.filter(status='DONE').count(),
+                'tasks_overdue': tasks_overdue,
             },
-            'domain_stats': list(domain_stats),
-            'performance_trend': performance_trend,
+            'domain_stats': domain_stats,
+            'performance_trend': self._trend(scoped_tasks, days),
+            'period': {'days': days, 'bucket': 'day' if days <= 31 else 'week'},
         })

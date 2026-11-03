@@ -99,8 +99,8 @@ class UserAccountSecurityTests(RBACTestCase):
         self.assertEqual(self.client.delete(f'/api/users/{self.admin.id}/').status_code, 403)
 
     def test_employee_sees_only_own_account_and_profile(self):
-        EmployeeProfile.objects.create(user=self.emp1, hourly_rate=100)
-        EmployeeProfile.objects.create(user=self.emp2, hourly_rate=999)
+        # профили создаются автоматически вместе с пользователями
+        EmployeeProfile.objects.filter(user=self.emp2).update(hourly_rate=999)
         self.login(self.emp1)
         self.assertEqual([u['id'] for u in rows(self.client.get('/api/users/'))], [self.emp1.id])
         profiles = rows(self.client.get('/api/employees/profiles/'))
@@ -110,14 +110,15 @@ class UserAccountSecurityTests(RBACTestCase):
         self.assertEqual(res.status_code, 403)
 
         self.login(self.pm1)
-        self.assertEqual(len(rows(self.client.get('/api/employees/profiles/'))), 2)
+        self.assertEqual(len(rows(self.client.get('/api/employees/profiles/'))), EmployeeProfile.objects.count())
+        self.assertGreater(EmployeeProfile.objects.count(), 1)
 
     def test_superuser_gets_admin_role(self):
         root = User.objects.create_superuser(username='root', password='pass12345')
         self.assertEqual(root.role, 'ADMIN')
 
     def test_profile_with_certificate_is_serialized(self):
-        profile = EmployeeProfile.objects.create(user=self.emp1)
+        profile = self.emp1.profile
         EmployeeCertificate.objects.create(
             employee=profile, name='PMP', expiry_date=datetime.date(2020, 1, 1))
         self.login(self.admin)

@@ -57,6 +57,11 @@ class Project(models.Model):
     def __str__(self):
         return self.name
 
+    def participations_qs(self):
+        """История участия сотрудников в проекте (matching.ProjectParticipation)."""
+        from matching.models import ProjectParticipation
+        return ProjectParticipation.objects.filter(project=self)
+
 
 class ProjectMember(models.Model):
     ROLE_CHOICES = [
@@ -103,7 +108,12 @@ class PlanningBlock(models.Model):
     parent = models.ForeignKey('self', on_delete=models.CASCADE, null=True, blank=True, related_name='children')
     order = models.PositiveIntegerField(default=0)
     process_template = models.ForeignKey('workflows.WorkflowTemplate', on_delete=models.SET_NULL, null=True, blank=True, related_name='planning_blocks')
-    
+    # Из какого шаблона каталога создан этап — по нему считается статистика использования пакета
+    source_template = models.ForeignKey(
+        'self', on_delete=models.SET_NULL, null=True, blank=True, related_name='derived_blocks',
+        limit_choices_to={'is_template': True},
+    )
+
     # Metadata
     avg_duration = models.PositiveIntegerField(null=True, blank=True, help_text="Средняя длительность в днях")
     complexity = models.CharField(max_length=20, default='MEDIUM', choices=[

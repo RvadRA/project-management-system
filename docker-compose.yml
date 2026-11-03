@@ -8,9 +8,11 @@ services:
     environment:
       POSTGRES_DB: pms_db
       POSTGRES_USER: pms_user
-      POSTGRES_PASSWORD: pms_password
+      # Пароль берётся из окружения (.env); значение по умолчанию — только для локальной разработки
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-pms_password}
     ports:
-      - "5432:5432"
+      # База доступна только с этой машины, а не из сети
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
 

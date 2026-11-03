@@ -10,6 +10,7 @@ import { useAppContext } from '../context/AppContext';
 import { OnboardingTour } from './OnboardingTour';
 import { CommandPalette } from './CommandPalette';
 import { HelpCenter } from './HelpCenter';
+import { AssistantPanel } from './AssistantPanel';
 import { ALL_ROLES, STAFF_ROLES, ROLE_LABELS } from '../utils/roles';
 
 // Role-based nav items
@@ -201,6 +202,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
       <OnboardingTour />
       <CommandPalette />
+      <AssistantPanel />
       <HelpCenter />
     </div>
   );

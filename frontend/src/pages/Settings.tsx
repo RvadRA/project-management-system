@@ -143,7 +143,7 @@ export default function Settings() {
         {[
           { id: 'skills', label: 'Навыки', icon: Zap },
           { id: 'risks', label: 'Риски', icon: AlertTriangle },
-          { id: 'roles', label: 'Роли', icon: Shield },
+          { id: 'roles', label: 'Должности', icon: Shield },
           { id: 'domains', label: 'Домены', icon: FolderOpen },
           { id: 'calendars', label: 'Календари', icon: Calendar },
           { id: 'blocks', label: 'Каталог блоков', icon: BookOpen },
@@ -322,19 +322,19 @@ export default function Settings() {
                     {b.domain}
                   </span>
                   <div className="flex items-center gap-1 text-[10px] text-emerald-400 font-bold">
-                    {Math.round(b.success_rate * 100)}% SUCCESS
+                    {b.analytics?.success_rate != null ? `${Math.round(b.analytics.success_rate * 100)}% завершено` : 'не использован'}
                   </div>
                 </div>
                 <h3 className="text-white font-bold mb-1 group-hover:text-violet-400 transition-colors">{b.name}</h3>
-                <p className="text-xs text-slate-500 mb-6 line-clamp-2">{b.complexity} complexity · {b.avg_duration} days avg</p>
+                <p className="text-xs text-slate-500 mb-6 line-clamp-2">Сложность: {b.complexity} · {b.stats?.span_days ?? b.avg_duration ?? '—'} дн. · задач: {b.stats?.task_count ?? 0}</p>
                 <div className="flex items-center justify-between pt-4 border-t border-slate-800">
                    <div className="flex items-center gap-2">
                       <Clock size={14} className="text-slate-600" />
-                      <span className="text-[11px] text-slate-400">Dev: {b.analytics?.avg_actual_duration || '—'}d</span>
+                      <span className="text-[11px] text-slate-400">Факт: {b.analytics?.avg_actual_duration ?? '—'} дн.</span>
                    </div>
                    <div className="flex items-center gap-2">
                       <Zap size={14} className="text-slate-600" />
-                      <span className="text-[11px] text-slate-400">Used: {b.analytics?.usage_count || 0}x</span>
+                      <span className="text-[11px] text-slate-400">Использован: {b.analytics?.usage_count ?? 0}</span>
                    </div>
                 </div>
               </div>
@@ -607,8 +607,8 @@ export default function Settings() {
                     />
                   </div>
                   <div>
-                    <label className="block text-xs text-slate-400 mb-1.5">Роль</label>
-                    <select 
+                    <label className="block text-xs text-slate-400 mb-1.5">Роль в системе (уровень доступа)</label>
+                    <select
                       value={formData.role || 'EMPLOYEE'}
                       onChange={e => setFormData({...formData, role: e.target.value})}
                       className="w-full bg-slate-800 border border-slate-700 text-slate-200 text-sm rounded-xl px-4 py-2.5 focus:outline-none focus:border-violet-500"

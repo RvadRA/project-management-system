@@ -1,65 +1,40 @@
-# Project Management System / Система управления проектами
+# Project Management System
 
-English / Русский
+A project and workflow management application with employee matching, reusable planning blocks, project/task tracking, workflow templates, and notifications.
 
-## Summary / Кратко
+## Tech stack
 
-A corporate Project Management System (backend: Django + DRF; frontend: React + TypeScript) — supports reusable project planning blocks, employee matching, workflow templates, task management, and notifications.
+- Backend: Django and Django REST Framework
+- Frontend: React, TypeScript, and Vite
+- Data/services: PostgreSQL, Redis, and Celery
 
-Корпоративная система управления проектами (backend: Django + DRF; frontend: React + TypeScript) — поддерживает переиспользуемые блоки планирования, подбор сотрудников, шаблоны процессов, управление задачами и уведомления.
+## Run locally
 
----
+1. Install Python and Node.js, then create a Python virtual environment.
+2. Install backend dependencies with `pip install -r requirements.txt`.
+3. Copy `.env.example` to `.env` and set your local database settings and a unique Django secret key.
+4. Start PostgreSQL and Redis. To start the local PostgreSQL container, run `docker compose up -d db`.
+5. Apply migrations and start Django:
 
-## Quick start (5 minutes)
+   ```powershell
+   python manage.py migrate
+   python manage.py runserver
+   ```
 
-Recommended: Docker
+6. In another terminal, start the frontend:
 
-```bash
-# Start services
-docker-compose up -d
+   ```powershell
+   cd frontend
+   npm install
+   npm run dev
+   ```
 
-# Activate venv (if running locally)
-source venv/Scripts/activate  # Git Bash / macOS/Linux
-.\venv\Scripts\Activate.ps1 # PowerShell (Windows)
+The frontend is available at <http://localhost:5173> and the backend at <http://localhost:8000>.
 
-# Apply migrations and create superuser
-python manage.py migrate
-python manage.py createsuperuser
+## Documentation
 
-# Run backend (Terminal 1)
-python manage.py runserver
-
-# Run worker (Terminal 2)
-celery -A config worker -l info -P eventlet
-
-# Run beat (Terminal 3)
-celery -A config beat -l info
-
-# Run frontend (Terminal 4)
-cd frontend
-npm install
-npm run dev
-```
-
-Frontend: http://localhost:5173
-Backend / Admin: http://localhost:8000
-
----
-
-## Documentation / Документация
-
-- Main index: `INDEX.md`
-- Installation: `INSTALLATION.md` (EN) and `INSTALLATION_RU.md` (RU)
-- Deployment: `DEPLOYMENT.md`
-- Quick reference: `QUICK_REFERENCE.md`
-- Summary: `SUMMARY.md`
-
----
-
-## Repository
-
-https://github.com/RvadRA/project-management-system.git
-
----
-
-If you want, I can expand this `README.md` with badges, screenshots, or a more detailed overview in English and Russian.
+- [Installation (English)](INSTALLATION.md)
+- [Installation (Russian)](INSTALLATION_RU.md)
+- [Deployment](DEPLOYMENT.md)
+- [Running with old and synthetic data](RUN_OLD_AND_NEW_DATA.md)
+- [Documentation index](INDEX.md)

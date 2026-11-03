@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
-import api from '../api/client';
+import api, { serverLogout } from '../api/client';
 
 export interface User {
   id: number;
@@ -62,10 +62,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const logout = () => {
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('refresh_token');
-    setUser(null);
-    window.location.href = '/login';
+    // Сначала просим сервер аннулировать токен, затем очищаем браузер
+    void serverLogout().finally(() => {
+      localStorage.removeItem('access_token');
+      localStorage.removeItem('refresh_token');
+      setUser(null);
+      window.location.href = '/login';
+    });
   };
 
   const updateUserLocal = (userData: User) => {

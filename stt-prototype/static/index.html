@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#080b0a">
+    <title>Local Speech Studio</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <main class="studio">
+      <header class="studio-header">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none">
+              <path d="M3 10v4m4-8v12m4-16v20m4-14v8m4-12v16m4-10v4" />
+            </svg>
+          </span>
+          <div>
+            <h1>Local Speech Studio</h1>
+            <p>ProJectMS · Standalone prototype</p>
+          </div>
+        </div>
+        <span class="local-badge"><span></span>Local only</span>
+      </header>
+
+      <section class="controls" aria-label="Audio input">
+        <button class="input-card" id="record-button" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="9" y="2" width="6" height="13" rx="3"></rect>
+            <path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8"></path>
+          </svg>
+          <span id="record-label">Record</span>
+        </button>
+        <button class="input-card" id="upload-button" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 16V3m0 0L7 8m5-5 5 5M5 14v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"></path>
+          </svg>
+          <span>Upload audio</span>
+        </button>
+        <input id="audio-file" type="file"
+          accept=".aac,.flac,.m4a,.mp3,.mp4,.ogg,.wav,.webm,audio/*" hidden>
+      </section>
+
+      <fieldset class="language-field">
+        <legend>Language</legend>
+        <div class="language-options">
+          <label class="language-choice">
+            <input type="radio" name="language" value="auto" checked>
+            <span>Auto-detect</span>
+          </label>
+          <label class="language-choice">
+            <input type="radio" name="language" value="en">
+            <span>English</span>
+          </label>
+          <label class="language-choice">
+            <input type="radio" name="language" value="ru">
+            <span>Русский</span>
+          </label>
+          <label class="language-choice">
+            <input type="radio" name="language" value="uz">
+            <span>O‘zbekcha</span>
+          </label>
+        </div>
+      </fieldset>
+
+      <section class="transcript-section">
+        <div class="transcript-heading">
+          <label for="transcript">Recognized text — editable</label>
+          <span id="transcript-meta" class="transcript-meta"></span>
+        </div>
+        <textarea id="transcript" spellcheck="true"
+          placeholder="Your recognized speech will appear here. You can correct it before copying."
+          aria-describedby="status-message"></textarea>
+      </section>
+
+      <p id="status-message" class="status" role="status" aria-live="polite">
+        Choose Record or upload an audio file to begin.
+      </p>
+      <div class="progress" id="progress" hidden>
+        <span class="spinner" aria-hidden="true"></span>
+        <span id="progress-label">Transcribing locally…</span>
+      </div>
+
+      <footer class="actions">
+        <button class="action-button primary" id="copy-button" type="button" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="8" y="8" width="13" height="13" rx="2"></rect>
+            <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"></path>
+          </svg>
+          Copy transcript
+        </button>
+        <button class="action-button" id="clear-button" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M3 6h18m-2 0-.9 14H5.9L5 6m4 0V4h6v2m-5 4v6m4-6v6"></path>
+          </svg>
+          Clear
+        </button>
+      </footer>
+      <p class="privacy-note">
+        Audio is processed on this computer and deleted after transcription.
+        Nothing is sent to Ollama or a cloud service.
+      </p>
+      <p class="error-message" id="error-message" role="alert" hidden></p>
+    </main>
+  </body>
+</html>

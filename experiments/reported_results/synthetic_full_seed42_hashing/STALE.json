@@ -1,0 +1,8 @@
+{
+  "fixture": "synthetic_seed42",
+  "marked_at": "2026-10-20T00:00:00+00:00",
+  "note": "Use a synthetic-v2 run for current comparisons.",
+  "reason": "Generated with synthetic-v1 and/or the pre-fix availability policy; not comparable to synthetic-v2 results.",
+  "stale": true,
+  "superseded_by": "synthetic_v2_full_seed42_hashing"
+}

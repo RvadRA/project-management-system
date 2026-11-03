@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { lazy, Suspense, useState, useEffect, useMemo } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Plus, Search, ArrowUpRight, Calendar, Users, X, Copy, FolderOpen, Trash2, Edit2, Save, ListTree, GitMerge, History, Zap, AlertTriangle, Paperclip, ShieldCheck } from 'lucide-react';
 import api from '../api/client';
 import { useAppContext } from '../context/AppContext';
@@ -8,9 +8,15 @@ import { toast } from 'react-hot-toast';
 import { niceConfirm } from '../utils/confirm';
 import type { Project, PlanningBlock, ProjectMember } from '../context/AppContext';
 import TransferWizard from '../components/TransferWizard';
-import GanttChart from '../components/GanttChart';
+const GanttChart = lazy(() => import('../components/GanttChart'));
 import ProjectFiles from '../components/ProjectFiles';
-import { isStaff, projectPerms, MEMBER_PERMISSIONS } from '../utils/roles';
+import AllocationInput from '../components/AllocationInput';
+import TeamRatingModal from '../components/TeamRatingModal';
+import MemberRoleSelect from '../components/MemberRoleSelect';
+import {
+  isStaff, projectPerms, MEMBER_PERMISSIONS, MEMBER_ROLE_MANAGER,
+  isMemberManager, memberPositionLabel, memberRoleValue, resolveMemberRole,
+} from '../utils/roles';
 
 // Status labels in Russian
 const statusMap: Record<string, string> = {
@@ -46,14 +52,6 @@ const domainColor: Record<string, string> = {
 
 
 type ModalMode = 'none' | 'create' | 'import' | 'edit' | 'detail';
-
-// Встроенные роли участника проекта (ProjectMember.ROLE_CHOICES), кроме менеджера
-const BUILTIN_MEMBER_ROLES: Record<string, string> = {
-  DEVELOPER: 'Исполнитель',
-  ANALYST: 'Аналитик',
-  DESIGNER: 'Дизайнер',
-  QA: 'Тестировщик',
-};
 
 const WBSTaskItem = ({ 
   task, 
@@ -558,9 +556,12 @@ function ProjectDetailPanel({
   isWizardOpen,
   setIsWizardOpen,
   wizardSource,
-  setWizardSource
-}: { 
-  project: Project; 
+  setWizardSource,
+  initialTab
+}: {
+  project: Project;
+  /** Вкладка, которую нужно открыть сразу (переход по ссылке из ассистента) */
+  initialTab?: 'gantt';
   onClose: () => void;
   isWizardOpen: boolean;
   setIsWizardOpen: (open: boolean) => void;
@@ -586,15 +587,18 @@ function ProjectDetailPanel({
     return tabs;
   }, [perms]);
 
-  const [activeTab, setActiveTab] = useState<DetailTab>('details');
+  const [activeTab, setActiveTab] = useState<DetailTab>(initialTab ?? 'details');
   const [wbsView, setWbsView] = useState<'tree' | 'gantt'>('tree');
   const [projectBlocks, setProjectBlocks] = useState<PlanningBlock[]>([]);
   const [loadingBlocks, setLoadingBlocks] = useState(false);
   
   // State for adding team members
   const [selectedUserId, setSelectedUserId] = useState<number | ''>('');
-  const [selectedRole, setSelectedRole] = useState('DEVELOPER');
-  const [selectedLoad, setSelectedLoad] = useState(100);
+  const [selectedRole, setSelectedRole] = useState('');
+  const [selectedLoad, setSelectedLoad] = useState(50);
+  const [selectedStart, setSelectedStart] = useState(project.start_date || '');
+  const [selectedEnd, setSelectedEnd] = useState(project.end_date || '');
+  const [ratingOpen, setRatingOpen] = useState(false);
   const [aiSuggestion, setAiSuggestion] = useState<any>(null);
   const [preview, setPreview] = useState<any>(null);
   const [adding, setAdding] = useState(false);
@@ -621,7 +625,7 @@ function ProjectDetailPanel({
     manager_allocation: project.members?.find(m => m.user.id === (project.manager?.id || 0) && m.role === 'MANAGER')?.allocation_percentage || 100
   });
   const [updatingStatus, setUpdatingStatus] = useState(false);
-  const [aiSuggestionRole, setAiSuggestionRole] = useState<string | number>('DEVELOPER');
+  const [aiSuggestionRole, setAiSuggestionRole] = useState('');
 
   const handleDeleteTask = async (taskId: number) => {
     if (!await niceConfirm('Удалить эту задачу?')) return;
@@ -719,6 +723,10 @@ function ProjectDetailPanel({
     setUpdatingStatus(true);
     try {
       await updateProject(project.id, { status: newStatus });
+      // Завершение проекта — повод оценить команду: оценки идут в историю сотрудников и в подбор
+      if (newStatus === 'COMPLETED' && isManager && project.status !== 'COMPLETED') setRatingOpen(true);
+    } catch (err: any) {
+      toast.error(extractError(err, 'Не удалось изменить статус проекта'));
     } finally {
       setUpdatingStatus(false);
     }
@@ -726,38 +734,16 @@ function ProjectDetailPanel({
 
   const handleAddMember = async () => {
     if (!selectedUserId) return;
-    
-    const emp = employees.find(e => e.user.id === Number(selectedUserId));
-    if (emp) {
-      // Logic for existing employee check can go here if needed
-    }
-
     setAdding(true);
     try {
-      const roleId = parseInt(selectedRole);
-      const isGlobalRole = !isNaN(roleId) && globalRoles.some(r => r.id === roleId);
-      const globalRole = isGlobalRole ? globalRoles.find(r => r.id === roleId) : null;
-      
-      let roleName = selectedRole;
-      if (globalRole) {
-        roleName = globalRole.name;
-        // Map "Project Manager" global role to internal "MANAGER" for logic consistency
-        if (roleName.toLowerCase().includes('manager') || roleName.toLowerCase().includes('менеджер')) {
-          roleName = 'MANAGER';
-        }
-      }
-      
+      const { role, roleRefId } = resolveMemberRole(selectedRole, globalRoles);
       await addMemberToProject(
-        project.id, 
-        Number(selectedUserId), 
-        roleName, 
-        selectedLoad, 
-        isGlobalRole ? roleId : undefined
+        project.id, Number(selectedUserId), role, selectedLoad, roleRefId,
+        { start: selectedStart || undefined, end: selectedEnd || undefined },
       );
       setSelectedUserId('');
-      setSelectedLoad(100);
-    } catch (err: any) {
-      toast.error(extractError(err, 'Ошибка при добавлении участника'));
+    } catch {
+      // addMemberToProject уже показал ошибку
     } finally {
       setAdding(false);
     }
@@ -765,15 +751,10 @@ function ProjectDetailPanel({
 
   const handleUpdateMemberRole = async (userId: number, newRole: string, currentAllocation: number) => {
     try {
-      const roleId = parseInt(newRole);
-      const isGlobalRole = !isNaN(roleId) && globalRoles.some(r => r.id === roleId);
-      const roleName = isGlobalRole ? globalRoles.find(r => r.id === roleId)?.name || 'OTHER' : newRole;
-
-      await addMemberToProject(project.id, userId, roleName, currentAllocation, isGlobalRole ? roleId : undefined);
-      toast.success('Роль обновлена');
-    } catch (err: any) {
-      const msg = err.response?.data?.error || 'Ошибка при изменении роли';
-      toast.error(msg);
+      const { role, roleRefId } = resolveMemberRole(newRole, globalRoles);
+      await addMemberToProject(project.id, userId, role, currentAllocation, roleRefId);
+    } catch {
+      // addMemberToProject уже показал ошибку
     }
   };
 
@@ -788,6 +769,12 @@ function ProjectDetailPanel({
       setLoadingBlocks(false);
     }
   };
+
+  // Панель открыта сразу на плане — подгружаем этапы, как при переключении вкладки
+  useEffect(() => {
+    if (initialTab === 'gantt') void fetchProjectBlocks();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleTabChange = (tab: DetailTab) => {
     setActiveTab(tab);
@@ -903,6 +890,18 @@ function ProjectDetailPanel({
 
   const existingUserIds = new Set(project.members?.map(m => m.user.id) || []);
   const availableUsers = users.filter(u => !existingUserIds.has(u.id));
+  const selectedEmployee = employees.find(employee => employee.user.id === Number(selectedUserId)) ?? null;
+  const selectedLoadKnown = Boolean(selectedEmployee && selectedEmployee.workload_entries.length > 0);
+  const selectedLoadHigh = selectedLoadKnown && (selectedEmployee?.current_workload_percentage ?? 0) > 90;
+  const selectedPeriodStart = selectedStart || project.start_date;
+  const selectedPeriodEnd = selectedEnd || project.end_date;
+  const selectedPeriodHasWorkload = Boolean(
+    selectedEmployee
+    && selectedPeriodStart
+    && selectedPeriodEnd
+    && selectedEmployee.workload_entries.some(entry =>
+      entry.start_date <= selectedPeriodEnd && entry.end_date >= selectedPeriodStart),
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4">
@@ -1161,11 +1160,30 @@ function ProjectDetailPanel({
         {activeTab === 'team' && (
           <div className="space-y-6">
             <div className="space-y-2">
-              <p className="text-xs text-slate-500 uppercase tracking-wider mb-3">Команда проекта ({project.members?.length ?? 0} чел.)</p>
+              <p className="text-xs text-slate-500 uppercase tracking-wider">Команда проекта ({project.members?.length ?? 0} чел.)</p>
+              {isManager && project.status === 'COMPLETED' && (
+                <div className="flex items-center justify-between gap-3 p-3 bg-amber-500/5 border border-amber-500/20 rounded-xl">
+                  <p className="text-xs text-amber-200/90 leading-relaxed">
+                    Проект завершён. Оцените участников — оценки попадут в их историю и повлияют на подбор команды.
+                  </p>
+                  <button
+                    onClick={() => setRatingOpen(true)}
+                    className="flex-shrink-0 px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/30 text-amber-200 text-xs font-bold rounded-lg transition-colors"
+                  >
+                    Оценить команду
+                  </button>
+                </div>
+              )}
+              {isManager && (
+                <p className="text-[11px] text-slate-500 leading-relaxed pb-1">
+                  Должность показывает, чем человек занят в проекте, и на доступ не влияет.
+                  Доступ задаётся флажками; у менеджера проекта включены все права.
+                </p>
+              )}
               {project.members?.map((m: ProjectMember) => {
                 // Менеджеров в проекте может быть несколько; «ответственный» — тот, кто указан в карточке проекта
                 const isPrimaryManager = project.manager?.id === m.user.id;
-                const memberIsManager = m.is_manager ?? m.role === 'MANAGER';
+                const memberIsManager = isMemberManager(m);
                 const emp = employees.find(e => e.user.id === m.user.id);
                 const canRemove = canManageMembers && !isPrimaryManager && (!memberIsManager || isManager);
                 return (
@@ -1184,28 +1202,16 @@ function ProjectDetailPanel({
                           )}
                         </p>
                         {isManager && !isPrimaryManager ? (
-                          <select
-                            value={memberIsManager ? 'MANAGER' : (m.role_ref ? m.role_ref : m.role)}
-                            onChange={(e) => handleUpdateMemberRole(m.user.id, e.target.value, m.allocation_percentage)}
+                          <MemberRoleSelect
+                            value={memberRoleValue(m)}
+                            onChange={value => handleUpdateMemberRole(m.user.id, value, m.allocation_percentage)}
+                            positions={globalRoles}
+                            allowManager
                             className="bg-transparent border-none p-0 text-[10px] uppercase tracking-wider font-bold mt-0.5 text-violet-400 focus:ring-0 cursor-pointer hover:text-violet-300"
-                          >
-                            <option value="MANAGER">Менеджер проекта</option>
-                            {Object.entries(BUILTIN_MEMBER_ROLES).map(([value, label]) => (
-                              <option key={value} value={value}>{label}</option>
-                            ))}
-                            {/* Нестандартная роль из старых данных — иначе select показал бы первую опцию */}
-                            {!memberIsManager && !m.role_ref && !(m.role in BUILTIN_MEMBER_ROLES) && (
-                              <option value={m.role}>{m.role}</option>
-                            )}
-                            <optgroup label="Глобальные роли">
-                              {globalRoles.map(r => (
-                                <option key={r.id} value={r.id}>{r.name}</option>
-                              ))}
-                            </optgroup>
-                          </select>
+                          />
                         ) : (
                           <p className={`text-[10px] uppercase tracking-wider font-bold mt-0.5 ${memberIsManager ? 'text-blue-400' : 'text-slate-500'}`}>
-                            {memberIsManager ? 'Менеджер проекта' : (m.role_info?.name || BUILTIN_MEMBER_ROLES[m.role] || m.role)}
+                            {memberPositionLabel(m)}
                           </p>
                         )}
                       </div>
@@ -1293,53 +1299,52 @@ function ProjectDetailPanel({
                       <select
                         value={selectedUserId}
                         onChange={e => setSelectedUserId(e.target.value ? Number(e.target.value) : '')}
-                        className={`w-full bg-slate-900 border ${Number(selectedUserId) && (employees.find(e => e.user.id === Number(selectedUserId))?.current_workload_percentage || 0) > 90 ? 'border-amber-500/50' : 'border-slate-700'} text-slate-200 text-xs rounded-lg px-3 py-2.5 focus:outline-none focus:border-violet-500`}
+                        className={`w-full bg-slate-900 border ${selectedLoadHigh ? 'border-amber-500/50' : 'border-slate-700'} text-slate-200 text-xs rounded-lg px-3 py-2.5 focus:outline-none focus:border-violet-500`}
                       >
                         <option value="">— Выбрать из списка —</option>
                         {availableUsers.map(u => {
-                          const empLoad = employees.find(e => e.user.id === u.id)?.current_workload_percentage || 0;
+                          const emp = employees.find(employee => employee.user.id === u.id);
+                          const empLoad = emp?.current_workload_percentage ?? 0;
+                          const loadKnown = Boolean(emp && emp.workload_entries.length > 0);
                           return (
-                            <option key={u.id} value={u.id} className={empLoad > 90 ? 'text-amber-400' : ''}>
-                              {u.full_name} ({empLoad}%)
+                            <option key={u.id} value={u.id} className={loadKnown && empLoad > 90 ? 'text-amber-400' : ''}>
+                              {u.full_name} ({loadKnown ? `${empLoad}%` : 'загрузка н/д'})
                             </option>
                           );
                         })}
                       </select>
                       {Number(selectedUserId) > 0 && (
-                        <p className={`text-[9px] mt-1.5 flex items-center gap-1 font-bold ${ (employees.find(e => e.user.id === Number(selectedUserId))?.current_workload_percentage || 0) > 90 ? 'text-amber-400' : 'text-slate-500' }`}>
-                          {(employees.find(e => e.user.id === Number(selectedUserId))?.current_workload_percentage || 0) > 90 && <AlertTriangle size={10} />}
-                          Текущая загрузка сотрудника: {employees.find(e => e.user.id === Number(selectedUserId))?.current_workload_percentage || 0}%
+                        <p className={`text-[9px] mt-1.5 flex items-center gap-1 font-bold ${
+                          !selectedLoadKnown || selectedLoadHigh ? 'text-amber-400' : 'text-slate-500'
+                        }`}>
+                          {(!selectedLoadKnown || selectedLoadHigh) && <AlertTriangle size={10} />}
+                          Текущая загрузка сотрудника: {selectedLoadKnown
+                            ? `${selectedEmployee?.current_workload_percentage ?? 0}%`
+                            : 'н/д — нет записей WorkloadEntry'}
                         </p>
                       )}
                     </div>
                     <div>
-                      <label className="block text-[10px] text-slate-500 uppercase mb-1.5">Роль</label>
-                      <select
+                      <label className="block text-[10px] text-slate-500 uppercase mb-1.5">Должность в проекте</label>
+                      <MemberRoleSelect
                         value={selectedRole}
-                        onChange={e => setSelectedRole(e.target.value)}
+                        onChange={setSelectedRole}
+                        positions={globalRoles}
+                        allowManager={isManager}
                         className="w-full bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg px-3 py-2.5 focus:outline-none focus:border-violet-500"
-                      >
-                        {Object.entries(BUILTIN_MEMBER_ROLES).map(([value, label]) => (
-                          <option key={value} value={value}>{label}</option>
-                        ))}
-                        {/* Назначать менеджеров может только менеджер проекта; их может быть несколько */}
-                        {isManager && <option value="MANAGER">Менеджер проекта</option>}
-                        <optgroup label="Глобальные роли">
-                          {globalRoles.map(r => {
-                            const isPM = /manager|менеджер|руководитель/i.test(r.name);
-                            return (
-                              <option key={r.id} value={r.id} disabled={isPM && !isManager}>
-                                {r.name}
-                              </option>
-                            );
-                          })}
-                        </optgroup>
-                      </select>
+                      />
                     </div>
-                    <div>
-                      <label className="block text-[10px] text-slate-500 uppercase mb-1.5">Загрузка %</label>
-                      <input type="number" min={1} max={100} value={selectedLoad} onChange={e => setSelectedLoad(Number(e.target.value))}
-                        className="w-full bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg px-3 py-2.5 focus:outline-none focus:border-violet-500" />
+                    <div className="col-span-2">
+                      <AllocationInput
+                        projectId={project.id}
+                        userId={selectedUserId}
+                        start={selectedStart}
+                        end={selectedEnd}
+                        onPeriodChange={(s, e) => { setSelectedStart(s); setSelectedEnd(e); }}
+                        value={selectedLoad}
+                        onChange={setSelectedLoad}
+                        availabilityConfirmed={selectedPeriodHasWorkload}
+                      />
                     </div>
                   </div>
                   <button
@@ -1394,11 +1399,13 @@ function ProjectDetailPanel({
             {loadingBlocks ? (
               <div className="flex justify-center py-12"><div className="w-6 h-6 border-2 border-violet-500 border-t-transparent rounded-full animate-spin"/></div>
             ) : wbsView === 'gantt' ? (
-              <GanttChart
-                blocks={projectBlocks as any}
-                projectStartDate={project.start_date}
-                projectEndDate={project.end_date}
-              />
+              <Suspense fallback={<div className="flex min-h-40 items-center justify-center text-sm text-slate-400" role="status">Загрузка диаграммы…</div>}>
+                <GanttChart
+                  blocks={projectBlocks as any}
+                  projectStartDate={project.start_date}
+                  projectEndDate={project.end_date}
+                />
+              </Suspense>
             ) : (
               <div className="space-y-4">
                 {projectBlocks.length === 0 ? (
@@ -1457,7 +1464,7 @@ function ProjectDetailPanel({
               {aiSuggestion.is_external && (
                 <div className="mb-4 bg-amber-500/10 border border-amber-500/20 p-2.5 rounded-lg">
                   <p className="text-[10px] text-amber-300 leading-relaxed">
-                    ⚠️ Сотрудник не в команде проекта. Будет добавлен автоматически.
+                    ⚠️ Сотрудник не в команде проекта. Он будет добавлен в команду после подтверждения назначения.
                   </p>
                 </div>
               )}
@@ -1498,20 +1505,14 @@ function ProjectDetailPanel({
                 
                 {aiSuggestion.is_external && (
                   <div className="pt-2 border-t border-slate-800">
-                    <label className="block text-[10px] text-slate-500 uppercase font-bold mb-1.5">Выберите роль для добавления</label>
-                    <select
+                    <label className="block text-[10px] text-slate-500 uppercase font-bold mb-1.5">Должность в проекте</label>
+                    <MemberRoleSelect
                       value={aiSuggestionRole}
-                      onChange={e => setAiSuggestionRole(e.target.value)}
+                      onChange={setAiSuggestionRole}
+                      positions={globalRoles}
+                      allowManager={isManager}
                       className="w-full bg-slate-950 border border-slate-800 text-slate-300 text-xs rounded-lg px-3 py-2 focus:outline-none focus:border-violet-500"
-                    >
-                    
-                      {isManager && <option value="MANAGER">Project Manager</option>}
-                      <optgroup label="Глобальные роли">
-                        {globalRoles.map(r => (
-                          <option key={r.id} value={r.id}>{r.name}</option>
-                        ))}
-                      </optgroup>
-                    </select>
+                    />
                   </div>
                 )}
               </div>
@@ -1519,23 +1520,18 @@ function ProjectDetailPanel({
               <button
                 onClick={async () => {
                   try {
-                    const roleId = parseInt(aiSuggestionRole.toString());
-                    const isGlobal = !isNaN(roleId) && globalRoles.some(r => r.id === roleId);
-                    const roleName = isGlobal ? globalRoles.find(r => r.id === roleId)?.name || 'OTHER' : aiSuggestionRole.toString();
+                    const { role, roleRefId } = resolveMemberRole(aiSuggestionRole, globalRoles);
+                    const isPM = role === MEMBER_ROLE_MANAGER;
 
-                    // If role is PM, check for existing and set 100% allocation
-                    const isPM = roleName === 'MANAGER' || (isGlobal && (roleName.toLowerCase().includes('manager') || roleName.toLowerCase().includes('менеджер')));
-                    
                     await api.post(`/projects/tasks/${aiSuggestion.taskId}/assign_user/`, {
                       user_id: aiSuggestion.user_id,
                       allow_auto_add: true,
-                      role: roleName,
-                      role_ref_id: isGlobal ? roleId : undefined,
-                      allocation_percentage: isPM ? 100 : undefined
+                      role,
+                      role_ref_id: roleRefId,
                     });
                     setAiSuggestion(null);
                     fetchProjectBlocks();
-                    toast.success("Исполнитель назначен" + (isPM ? " как Project Manager" : ""));
+                    toast.success("Исполнитель назначен" + (isPM ? " как менеджер проекта" : ""));
                   } catch (err: any) {
                     toast.error(extractError(err, 'Ошибка при назначении'));
                   }
@@ -1627,6 +1623,10 @@ function ProjectDetailPanel({
           </div>
         )}
 
+        {ratingOpen && (
+          <TeamRatingModal projectId={project.id} projectName={project.name} onClose={() => setRatingOpen(false)} />
+        )}
+
         {activeTab === 'files' && (
           <ProjectFiles projectId={project.id} canEdit={perms.can_edit_files} />
         )}
@@ -1672,6 +1672,15 @@ export default function Projects() {
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [modalMode, setModalMode] = useState<ModalMode>('none');
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
+  // Переход по ссылке «Открыть» из ассистента: сразу показываем нужный проект на вкладке плана
+  const location = useLocation();
+  const linked = location.state as { openProjectId?: number; openTab?: 'gantt' } | null;
+  const [handledLink, setHandledLink] = useState('');
+  if (linked?.openProjectId && handledLink !== location.key && projects.some(p => p.id === linked.openProjectId)) {
+    setHandledLink(location.key);
+    setSelectedProjectId(linked.openProjectId);
+    setModalMode('detail');
+  }
 
   const selectedProject = projects.find(p => p.id === selectedProjectId) || null;
   const [submitting, setSubmitting] = useState(false);
@@ -2010,6 +2019,8 @@ export default function Projects() {
           setIsWizardOpen={setIsWizardOpen}
           wizardSource={wizardSource}
           setWizardSource={setWizardSource}
+          key={`${selectedProject.id}-${handledLink}`}
+          initialTab={linked?.openProjectId === selectedProject.id && handledLink === location.key ? linked.openTab : undefined}
         />
       )}
 
@@ -2345,17 +2356,17 @@ export default function Projects() {
                               <div className="flex-1 min-w-0">
                                 <div className="flex justify-between items-start">
                                   <p className="text-xs text-slate-200 truncate">{block.name}</p>
-                                  {block.analytics && (
-                                    <span className="text-[9px] text-emerald-400 font-bold bg-emerald-500/10 px-1 rounded">
+                                  {block.analytics?.success_rate != null && (
+                                    <span className="text-[9px] text-emerald-400 font-bold bg-emerald-500/10 px-1 rounded" title="Доля завершённых этапов из созданных по этому пакету">
                                       {Math.round(block.analytics.success_rate * 100)}%
                                     </span>
                                   )}
                                 </div>
                                 <div className="flex items-center gap-2 mt-0.5">
                                   <p className="text-[10px] text-slate-500">{block.domain} • {block.complexity}</p>
-                                  {block.analytics && (
+                                  {block.analytics && block.analytics.usage_count > 0 && (
                                     <p className="text-[10px] text-slate-400 border-l border-slate-700 pl-2">
-                                      {block.analytics.avg_actual_duration}д / {block.analytics.usage_count}x
+                                      {block.analytics.avg_actual_duration != null ? `${block.analytics.avg_actual_duration} дн. · ` : ''}использован {block.analytics.usage_count} раз
                                     </p>
                                   )}
                                 </div>

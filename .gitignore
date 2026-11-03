@@ -31,6 +31,9 @@ local_settings.py
 db.sqlite3
 /media
 /staticfiles
+/backups/
+/models/
+/.claude/
 
 # IDE
 .vscode/
@@ -60,6 +63,9 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Matching experiment outputs
+/experiments/results/
 
 # Celery
 celerybeat-schedule

@@ -4,6 +4,7 @@ import {
   UploadCloud, FolderOpen, User, Calendar, Trash2, Edit2 
 } from 'lucide-react';
 import api, { downloadFile, fetchAllPages } from '../api/client';
+import AuthImage from '../components/AuthImage';
 import { useAppContext } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
 import { toast } from 'react-hot-toast';
@@ -590,9 +591,9 @@ export default function KnowledgeBase() {
                   </div>
                   
                   {/* Embedded File Preview (Images only for now) */}
-                  {/\.(jpe?g|png|gif|svg)$/i.test(previewMaterial.file) && (
+                  {/\.(jpe?g|png|gif|webp)$/i.test(previewMaterial.file) && (
                     <div className="mt-4 border border-slate-850 rounded-xl overflow-hidden bg-slate-950 flex justify-center p-4">
-                      <img src={previewMaterial.file} alt="Preview" className="max-h-60 object-contain rounded-lg" />
+                      <AuthImage url={`${materialDownloadUrl(previewMaterial.id)}?inline=1`} alt="Предпросмотр" className="max-h-60 object-contain rounded-lg" />
                     </div>
                   )}
                 </div>

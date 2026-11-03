@@ -2,24 +2,34 @@ import { useState } from 'react';
 import {
   ClipboardCheck, Clock, CheckCircle2, FileText,
   ChevronDown, ChevronUp, Bell, Calendar, BarChart3,
-  Upload, List, ThumbsUp, Zap
+  Upload, List, ThumbsUp, Zap, Star, ChevronRight
 } from 'lucide-react';
-import { useAppContext } from '../context/AppContext';
+import { useAppContext, type KanbanTask } from '../context/AppContext';
 import { TaskSubmissionRouter } from '../components/tasks/TaskSubmissionRouter';
+import { slaLabel, slaRatio } from '../utils/sla';
+import { toast } from 'react-hot-toast';
+import { downloadFile } from '../api/client';
+import { useAuth } from '../context/AuthContext';
+import { memberPositionLabel } from '../utils/roles';
+import ContributionModal from '../components/ContributionModal';
 
 
-// Priority is derived from task id as mock since backend doesn't have priority
-const getPriority = (id: number) => {
-  if (id % 3 === 0) return 'HIGH';
-  if (id % 2 === 0) return 'MEDIUM';
-  return 'LOW';
-};
+const getPriority = (task: KanbanTask) => (task.priority in priorityLabel ? task.priority : 'MEDIUM');
 const priorityStyle: Record<string, string> = {
+  URGENT: 'bg-red-500/20 text-red-400 border-red-500/30',
   HIGH: 'bg-red-500/10 text-red-400 border-red-500/20',
   MEDIUM: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
   LOW: 'bg-slate-700/50 text-slate-400 border-slate-600/30',
 };
-const priorityLabel: Record<string, string> = { HIGH: 'Высокий', MEDIUM: 'Средний', LOW: 'Низкий' };
+const priorityLabel: Record<string, string> = { URGENT: 'Срочно', HIGH: 'Высокий', MEDIUM: 'Средний', LOW: 'Низкий' };
+
+/** Состояние активной задачи для исполнителя */
+const stateOf = (task: KanbanTask): { label: string; color: string } => {
+  if (task.status === 'ESCALATED') return { label: 'Просрочена', color: 'text-red-400' };
+  if (task.status === 'IN_PROGRESS') return { label: 'В работе', color: 'text-blue-400' };
+  if (task.is_blocked) return { label: 'Ждёт предыдущий этап', color: 'text-slate-500' };
+  return { label: 'К выполнению', color: 'text-violet-400' };
+};
 
 const taskTypeInfo: Record<string, { label: string; icon: any }> = {
   TEXT_REPORT: { label: 'Отчёт',       icon: FileText },
@@ -32,7 +42,21 @@ const taskTypeInfo: Record<string, { label: string; icon: any }> = {
 
 
 export default function MyWorkspace() {
-  const { myTasks, notifications, processes, markNotificationRead, markAllRead, unreadCount } = useAppContext();
+  const { myTasks, notifications, processes, markNotificationRead, markAllRead, unreadCount, updateTaskStatus, employees } = useAppContext();
+  const { user } = useAuth();
+  const [contributionProject, setContributionProject] = useState<number | null>(null);
+
+  // Мои проекты: текущие и завершённые с оценкой руководителя
+  const myProfile = employees.find(e => e.user.id === user?.id);
+  const myRatings = myProfile?.participations ?? [];
+  const ratedProjects = myRatings.filter(p => p.stars);
+  const myAvgStars = ratedProjects.length ? ratedProjects.reduce((sum, p) => sum + (p.stars ?? 0), 0) / ratedProjects.length : 0;
+  const myProjects = [
+    ...(myProfile?.memberships ?? [])
+      .filter(m => !myRatings.some(p => p.project === m.project))
+      .map(m => ({ project: m.project, name: m.project_name, position: memberPositionLabel(m), current: true, stars: null as number | null, comment: '' })),
+    ...myRatings.map(p => ({ project: p.project, name: p.project_name, position: p.role, current: false, stars: p.stars, comment: p.comment ?? '' })),
+  ];
   const [expandedTask, setExpandedTask] = useState<number | null>(null);
   const [showHistory, setShowHistory] = useState(false);
 
@@ -40,7 +64,10 @@ export default function MyWorkspace() {
   const processNameById: Record<number, string> = {};
   processes.forEach(p => { processNameById[p.id] = p.name; });
 
-  const activeTasks = myTasks.filter(t => t.status !== 'DONE' && t.status !== 'REVIEW');
+  const stateOrder = (t: KanbanTask) => t.status === 'ESCALATED' ? 0 : t.status === 'IN_PROGRESS' ? 1 : t.is_blocked ? 3 : 2;
+  const activeTasks = myTasks
+    .filter(t => t.status !== 'DONE' && t.status !== 'REVIEW')
+    .sort((a, b) => stateOrder(a) - stateOrder(b));
   const reviewTasks = myTasks.filter(t => t.status === 'REVIEW');
   const completedTasks = myTasks.filter(t => t.status === 'DONE');
 
@@ -92,8 +119,9 @@ export default function MyWorkspace() {
             <div className="divide-y divide-slate-800">
               {activeTasks.map(task => {
                 const isExpanded = expandedTask === task.id;
-                const priority = getPriority(task.id);
+                const priority = getPriority(task);
                 const processName = processNameById[task.workflow] ?? '';
+                const state = stateOf(task);
                 return (
                   <div key={task.id}>
                     <div
@@ -114,27 +142,52 @@ export default function MyWorkspace() {
                         </div>
                         <p className="text-xs text-slate-600 mt-0.5">
                           {processName && `${processName} · `}
-                          {task.due_date ? `До ${new Date(task.due_date).toLocaleDateString()}` : 'Дедлайн не задан'}
+                          {task.due_date
+                            ? `До ${new Date(task.due_date).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}`
+                            : 'Срок начнётся после запуска задачи'}
                           {task.is_overdue && (
-                            <span className="ml-2 text-red-400 font-semibold">⚠ Просрочена</span>
+                            <span className="ml-2 text-red-400 font-semibold">⚠ {slaLabel(task)}</span>
                           )}
                         </p>
                       </div>
                       <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border flex-shrink-0 ${priorityStyle[priority]}`}>
                         {priorityLabel[priority]}
                       </span>
-                      <span className={`text-xs flex-shrink-0 ${task.status === 'IN_PROGRESS' ? 'text-blue-400' : 'text-slate-500'}`}>
-                        {task.status === 'IN_PROGRESS' ? 'В работе' : 'К выполнению'}
-                      </span>
+                      <span className={`text-xs flex-shrink-0 ${state.color}`}>{state.label}</span>
                       {isExpanded ? <ChevronUp size={14} className="text-slate-600 flex-shrink-0" /> : <ChevronDown size={14} className="text-slate-600 flex-shrink-0" />}
                     </div>
 
                     {isExpanded && (
-                      <div className="px-5 pb-4">
-                        <TaskSubmissionRouter
-                          task={task}
-                          onClose={() => setExpandedTask(null)}
-                        />
+                      <div className="px-5 pb-4 space-y-3">
+                        {task.description && (
+                          <p className="text-xs text-slate-400 leading-relaxed whitespace-pre-wrap">{task.description}</p>
+                        )}
+                        {task.review_comment && (
+                          <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+                            <p className="text-xs text-amber-300 leading-relaxed">
+                              <span className="font-bold">Замечание проверяющего:</span> {task.review_comment}
+                            </p>
+                          </div>
+                        )}
+                        {task.is_blocked ? (
+                          // Сдать задачу нельзя, пока не закрыты предыдущие этапы процесса
+                          <p className="text-xs text-slate-500 bg-slate-800/40 border border-slate-800 rounded-lg p-3">
+                            Задача в очереди: она перейдёт в работу автоматически, когда будут выполнены предыдущие этапы процесса.
+                            Срок начнёт отсчитываться с этого момента.
+                          </p>
+                        ) : task.status === 'TODO' ? (
+                          <button
+                            onClick={() => updateTaskStatus(task.id, 'IN_PROGRESS')}
+                            className="w-full py-2.5 bg-violet-600 hover:bg-violet-500 text-white text-sm font-semibold rounded-lg transition-colors"
+                          >
+                            Взять в работу
+                          </button>
+                        ) : (
+                          <TaskSubmissionRouter
+                            task={task}
+                            onClose={() => setExpandedTask(null)}
+                          />
+                        )}
                       </div>
                     )}
                   </div>
@@ -185,7 +238,7 @@ export default function MyWorkspace() {
               <div className="divide-y divide-slate-800 border-t border-slate-800">
                 {completedTasks.map(task => {
                   const isExpanded = expandedTask === task.id;
-                  const priority = getPriority(task.id);
+                  const priority = getPriority(task);
                   const typeInfo = taskTypeInfo[task.task_type] || taskTypeInfo['TEXT_REPORT'];
                   const Icon = typeInfo.icon;
                   
@@ -197,7 +250,7 @@ export default function MyWorkspace() {
                       >
                         {/* Priority indicator strip */}
                         <div className={`absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-6 rounded-r-full ${
-                          priority === 'HIGH' ? 'bg-red-500/50' : 
+                          priority === 'HIGH' || priority === 'URGENT' ? 'bg-red-500/50' :
                           priority === 'MEDIUM' ? 'bg-amber-500/50' : 'bg-slate-700/50'
                         }`} />
 
@@ -205,7 +258,7 @@ export default function MyWorkspace() {
                         <div className="flex-1 min-w-0">
                           <p className="text-sm text-slate-300 font-medium truncate">{task.name}</p>
                           <p className="text-[10px] text-slate-600 mt-0.5">
-                            {processNameById[task.workflow] ?? ''} · Завершено {task.created_at ? new Date(task.created_at).toLocaleDateString() : ''}
+                            {processNameById[task.workflow] ?? ''} · Завершено {task.completed_at ? new Date(task.completed_at).toLocaleDateString('ru-RU') : ''}
                           </p>
                         </div>
                         <div className="flex items-center gap-2">
@@ -254,18 +307,16 @@ export default function MyWorkspace() {
                                 <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Прикрепленные файлы:</h4>
                                 <div className="flex flex-wrap gap-2">
                                   {task.attachments.map(file => (
-                                    <a 
-                                      key={file.id} 
-                                      href={file.file} 
-                                      target="_blank" 
-                                      rel="noopener noreferrer"
+                                    <button
+                                      key={file.id} type="button"
+                                      onClick={() => downloadFile(file.download_url, file.original_name).catch(() => toast.error('Не удалось скачать файл'))}
                                       className="flex items-center gap-2 px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg hover:border-violet-500/50 transition-colors group"
                                     >
                                       <FileText size={14} className="text-violet-400" />
                                       <span className="text-[11px] text-slate-300 group-hover:text-violet-300 truncate max-w-[150px]">
                                         {file.original_name}
                                       </span>
-                                    </a>
+                                    </button>
                                   ))}
                                 </div>
                               </div>
@@ -331,28 +382,67 @@ export default function MyWorkspace() {
             </div>
           </div>
 
+          {/* Мои проекты и оценки */}
+          {myProfile && myProjects.length > 0 && (
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Мои проекты и оценки</h3>
+                {ratedProjects.length > 0 && (
+                  <span className="flex items-center gap-1 text-xs font-bold text-amber-400" title={`Средняя оценка по ${ratedProjects.length} проектам`}>
+                    <Star size={12} className="fill-amber-400" /> {myAvgStars.toFixed(1)}
+                  </span>
+                )}
+              </div>
+              <div className="space-y-2">
+                {myProjects.map(item => (
+                  <button
+                    key={`${item.current ? 'm' : 'p'}${item.project}`} type="button"
+                    onClick={() => setContributionProject(item.project)}
+                    className="w-full text-left p-2.5 bg-slate-800/40 border border-slate-800 rounded-lg hover:border-violet-500/40 transition-colors"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-slate-200 truncate">{item.name}</p>
+                        <p className="text-[10px] text-slate-500 mt-0.5">{item.position}</p>
+                      </div>
+                      {item.stars ? (
+                        <span className="flex items-center gap-0.5 flex-shrink-0" title={`Оценка ${item.stars} из 5`}>
+                          {[1, 2, 3, 4, 5].map(n => (
+                            <Star key={n} size={11} className={n <= Math.round(item.stars!) ? 'fill-amber-400 text-amber-400' : 'text-slate-700'} />
+                          ))}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-slate-500 flex-shrink-0">{item.current ? 'идёт' : 'не оценён'}</span>
+                      )}
+                    </div>
+                    {item.comment && <p className="text-[11px] text-slate-400 mt-1.5 leading-relaxed">«{item.comment}»</p>}
+                    <p className="text-[10px] text-slate-500 mt-1 flex items-center gap-1">Мои задачи и сроки <ChevronRight size={10} /></p>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* SLA overview */}
-          {activeTasks.length > 0 && (
+          {activeTasks.some(t => slaRatio(t) !== null) && (
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
               <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Соблюдение SLA</h3>
               <div className="space-y-3">
-                {activeTasks.slice(0, 5).map(t => {
-                  const createdTime = t.created_at ? new Date(t.created_at).getTime() : Date.now();
-                  const totalTime = (t.sla_hours || 24) * 3600000;
-                  const elapsedRatio = Math.max(0, Math.min(1, (Date.now() - createdTime) / totalTime));
-                  const isOver = elapsedRatio >= 1;
+                {activeTasks.filter(t => slaRatio(t) !== null).slice(0, 5).map(t => {
+                  const ratio = slaRatio(t) ?? 0;
+                  const isOver = ratio >= 1;
                   return (
                     <div key={t.id}>
-                      <div className="flex justify-between text-xs mb-1">
-                        <span className="text-slate-400 truncate max-w-[150px]">{t.name}</span>
-                        <span className={`font-medium ${isOver ? 'text-red-400' : elapsedRatio > 0.7 ? 'text-amber-400' : 'text-emerald-400'}`}>
-                          {Math.round(elapsedRatio * (t.sla_hours || 24))}ч / {t.sla_hours || 24}ч
+                      <div className="flex justify-between text-xs mb-1 gap-2">
+                        <span className="text-slate-400 truncate">{t.name}</span>
+                        <span className={`font-medium flex-shrink-0 ${isOver ? 'text-red-400' : ratio > 0.7 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                          {slaLabel(t)}
                         </span>
                       </div>
                       <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
                         <div
-                          className={`h-full rounded-full ${isOver ? 'bg-red-500' : elapsedRatio > 0.7 ? 'bg-amber-500' : 'bg-emerald-500'}`}
-                          style={{ width: `${elapsedRatio * 100}%` }}
+                          className={`h-full rounded-full ${isOver ? 'bg-red-500' : ratio > 0.7 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                          style={{ width: `${Math.min(100, ratio * 100)}%` }}
                         />
                       </div>
                     </div>
@@ -363,6 +453,9 @@ export default function MyWorkspace() {
           )}
         </div>
       </div>
+      {myProfile && contributionProject !== null && (
+        <ContributionModal profileId={myProfile.id} projectId={contributionProject} onClose={() => setContributionProject(null)} />
+      )}
     </div>
   );
 }

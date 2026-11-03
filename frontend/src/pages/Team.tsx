@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Zap, ChevronRight, UserPlus, X, Plus, Edit2, Trash2, Save } from 'lucide-react';
+import { Search, Zap, ChevronRight, UserPlus, X, Plus, Edit2, Trash2, Save, Star } from 'lucide-react';
 import { useAppContext, type Employee } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
-import { isAdmin, canManageStaff } from '../utils/roles';
+import { isAdmin, canManageStaff, hasGlobalAccess, memberPositionLabel, projectPerms } from '../utils/roles';
+import ContributionModal from '../components/ContributionModal';
 import { toast } from 'react-hot-toast';
 import { niceConfirm } from '../utils/confirm';
 import api from '../api/client';
@@ -44,8 +45,31 @@ function LoadBadge({ load }: { load: number }) {
   return <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${color}`}>{load}% загружен</span>;
 }
 
+/** «3 задачи · 12 ч» — открытые задачи сотрудника и оценка их трудозатрат (SLA сюда не входит) */
+const taskLoadLabel = (emp: Employee) => {
+  const tasks = emp.open_task_count ?? 0;
+  if (tasks === 0) return 'Нет открытых задач';
+  const word = tasks % 10 === 1 && tasks % 100 !== 11 ? 'задача' : tasks % 10 >= 2 && tasks % 10 <= 4 && (tasks % 100 < 10 || tasks % 100 >= 20) ? 'задачи' : 'задач';
+  const hours = emp.active_task_hours > 0 ? `${emp.active_task_hours} ч` : 'часы не указаны';
+  return `${tasks} ${word} · ${hours}`;
+};
+
+/** Когда у сотрудника освободится время — по ближайшей дате окончания его записей загрузки */
+const freeFromLabel = (emp: Employee) => {
+  const today = new Date().toISOString().slice(0, 10);
+  const current = (emp.workload_entries ?? []).filter(e => e.start_date <= today && e.end_date >= today);
+  if (current.length === 0) return 'свободен';
+  // Грубая оценка: ближайшее окончание загрузки, после которого суммарно становится меньше 80%
+  const ends = [...new Set(current.map(e => e.end_date))].sort();
+  for (const end of ends) {
+    const left = current.filter(e => e.end_date > end).reduce((sum, e) => sum + e.load_percent, 0);
+    if (left < 80) return `с ${new Date(end).toLocaleDateString('ru-RU')}`;
+  }
+  return 'после ' + new Date(ends[ends.length - 1]).toLocaleDateString('ru-RU');
+};
+
 export default function Team() {
-  const { employees, skills, domains, createEmployee, updateEmployee, deleteEmployee, addSkillToEmployee, deleteEmployeeSkill, addCertificateToEmployee, deleteEmployeeCertificate, addUnavailabilityToEmployee, deleteEmployeeUnavailability, extractError, refreshData } = useAppContext();
+  const { employees, projects, skills, domains, createEmployee, updateEmployee, deleteEmployee, addSkillToEmployee, deleteEmployeeSkill, addCertificateToEmployee, deleteEmployeeCertificate, addUnavailabilityToEmployee, deleteEmployeeUnavailability, extractError, refreshData } = useAppContext();
   const navigate = useNavigate();
   const { user } = useAuth();
   // Учётные записи создаёт и удаляет только администратор; профили правит ещё и руководитель проектов
@@ -54,6 +78,16 @@ export default function Team() {
   const [activeTab, setActiveTab] = useState<'members' | 'availability'>('members');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Employee | null>(null);
+  // Проект, по которому открыт разбор «что сотрудник сделал»
+  const [contributionProject, setContributionProject] = useState<number | null>(null);
+  // Разбор по проекту открыт глобальным ролям, самому сотруднику и тем, кто видит все задачи проекта
+  const canOpenContribution = (projectId: number) =>
+    hasGlobalAccess(user) || selected?.user.id === user?.id
+    || projectPerms(projects.find(p => p.id === projectId)).can_view_all_tasks;
+  // История проектов сотрудника: сначала оценённые недавно
+  const history = [...(selected?.participations ?? [])].sort((a, b) => (b.rated_at ?? b.left_at ?? '').localeCompare(a.rated_at ?? a.left_at ?? ''));
+  const ratedHistory = history.filter(p => p.stars);
+  const avgStars = ratedHistory.length ? ratedHistory.reduce((sum, p) => sum + (p.stars ?? 0), 0) / ratedHistory.length : 0;
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -62,6 +96,7 @@ export default function Team() {
     position: '',
     domain: '',
     bio: '',
+    hourly_rate: '',
   });
 
   const [certForm, setCertForm] = useState({
@@ -157,6 +192,7 @@ export default function Team() {
       position: emp.position,
       domain: emp.domain || '',
       bio: emp.bio,
+      hourly_rate: Number(emp.hourly_rate) > 0 ? String(Number(emp.hourly_rate)) : '',
     });
     setCertForm({
       name: '',
@@ -171,7 +207,7 @@ export default function Team() {
   const handleUpdate = async () => {
     if (!selected) return;
     try {
-      await updateEmployee(selected.id, editForm);
+      await updateEmployee(selected.id, { ...editForm, hourly_rate: Number(editForm.hourly_rate) || 0 });
       setIsEditing(false);
       // Update local selection to show new data
       const updated = employees.find(e => e.id === selected.id);
@@ -282,7 +318,7 @@ export default function Team() {
                     </div>
                     <p className="text-xs font-bold text-violet-400 mt-0.5 truncate">
                       {emp.memberships?.length > 0 
-                        ? Array.from(new Set(emp.memberships.map(m => m.role_info?.name || m.role))).map(r => r === 'MANAGER' ? 'Менеджер' : r).join(', ')
+                        ? Array.from(new Set(emp.memberships.map(m => memberPositionLabel(m)))).join(', ')
                         : emp.position || 'Сотрудник'}
                     </p>
                     <p className="text-[10px] text-slate-500 mt-0.5">{emp.domain}</p>
@@ -290,8 +326,11 @@ export default function Team() {
                 </div>
                 <div className="flex items-center gap-3 mb-4">
                   <LoadBadge load={emp.current_workload_percentage} />
-                  <span className="text-xs px-2 py-0.5 rounded-full font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-                    Задачи: {emp.active_task_hours || 0} / 160 ч.
+                  <span
+                    className="text-xs px-2 py-0.5 rounded-full font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20"
+                    title="Открытые задачи и оценка их трудозатрат"
+                  >
+                    {taskLoadLabel(emp)}
                   </span>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
@@ -349,7 +388,7 @@ export default function Team() {
                             </span>
                             <p className="text-[10px] text-slate-500 font-medium">
                                {emp.memberships?.length > 0 
-                                 ? Array.from(new Set(emp.memberships.map(m => m.role_info?.name || m.role))).map(r => r === 'MANAGER' ? 'Менеджер' : r).join(', ')
+                                 ? Array.from(new Set(emp.memberships.map(m => memberPositionLabel(m)))).join(', ')
                                  : emp.position || 'Сотрудник'}
                             </p>
                          </div>
@@ -363,7 +402,7 @@ export default function Team() {
                                />
                             </div>
                             <span className={`text-[10px] font-bold ${isCritical ? 'text-red-400' : isHigh ? 'text-amber-400' : 'text-emerald-400'}`}>
-                               {load}% ({emp.active_task_hours} ч.)
+                               {load}% · {taskLoadLabel(emp)}
                             </span>
                          </div>
                       </td>
@@ -375,8 +414,8 @@ export default function Team() {
                            </div>
                          ) : (
                            <div className="flex flex-col gap-1">
-                              <span className="text-[10px] text-slate-500">Следующее окно:</span>
-                              <span className="text-[11px] font-bold text-slate-300">~ через {Math.max(1, Math.floor((160 - emp.active_task_hours) / 8))} дней</span>
+                              <span className="text-[10px] text-slate-500">Освободится:</span>
+                              <span className="text-[11px] font-bold text-slate-300">{freeFromLabel(emp)}</span>
                            </div>
                          )}
                       </td>
@@ -395,6 +434,10 @@ export default function Team() {
           </div>
         )}
       </div>
+
+      {selected && contributionProject !== null && (
+        <ContributionModal profileId={selected.id} projectId={contributionProject} onClose={() => setContributionProject(null)} />
+      )}
 
       {/* Detail panel */}
       {selected && (
@@ -438,11 +481,20 @@ export default function Team() {
                   <option value="">— Домен —</option>
                   {domains.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
                 </select>
+                {/* Ставка нужна подбору команды для оценки соответствия бюджету */}
+                <input type="number" min={0} step={50} value={editForm.hourly_rate}
+                  onChange={e => setEditForm({ ...editForm, hourly_rate: e.target.value })}
+                  className="w-full bg-slate-800 border border-slate-700 text-xs text-white rounded p-1.5 focus:border-violet-500 outline-none" placeholder="Ставка, ₽ в час" />
               </div>
             ) : (
               <>
                 <p className="text-sm text-slate-400 mt-0.5">{selected.position}</p>
                 <p className="text-xs text-slate-500 mt-0.5">{selected.domain}</p>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {Number(selected.hourly_rate) > 0
+                    ? `${Number(selected.hourly_rate).toLocaleString('ru-RU')} ₽/ч`
+                    : 'Ставка не указана'}
+                </p>
               </>
             )}
             <p className="text-xs text-slate-600 mt-1">{selected.user.email}</p>
@@ -454,8 +506,8 @@ export default function Team() {
               <span className="text-xs text-slate-400">Текущая загрузка</span>
               <div className="flex items-center gap-2">
                 <LoadBadge load={selected.current_workload_percentage} />
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-                  {selected.active_task_hours || 0}/160 ч.
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20" title="Открытые задачи и оценка их трудозатрат">
+                  {taskLoadLabel(selected)}
                 </span>
               </div>
             </div>
@@ -493,14 +545,22 @@ export default function Team() {
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Текущие проекты</h3>
               <div className="space-y-2">
                 {selected.memberships.map(m => (
-                  <div key={m.id} className="p-2.5 bg-slate-800/40 border border-slate-800 rounded-lg">
-                    <div className="flex justify-between items-start mb-1">
+                  <button
+                    key={m.id} type="button" onClick={() => setContributionProject(m.project)}
+                    disabled={!canOpenContribution(m.project)}
+                    title={canOpenContribution(m.project) ? 'Задачи сотрудника в этом проекте и сроки' : 'Задачи видны участникам проекта с правом «Все задачи»'}
+                    className="w-full text-left p-2.5 bg-slate-800/40 border border-slate-800 rounded-lg enabled:hover:border-violet-500/40 disabled:cursor-default transition-colors"
+                  >
+                    <div className="flex justify-between items-start gap-2">
                       <p className="text-xs font-bold text-slate-200 truncate">{m.project_name}</p>
-                      <span className="text-[9px] font-bold text-violet-400 bg-violet-500/10 px-1.5 py-0.5 rounded uppercase">
-                        {m.role_info?.name || (m.role === 'MANAGER' ? 'Менеджер' : m.role)}
+                      <span className="text-[9px] font-bold text-violet-400 bg-violet-500/10 px-1.5 py-0.5 rounded uppercase flex-shrink-0">
+                        {memberPositionLabel(m)}
                       </span>
                     </div>
-                  </div>
+                    {canOpenContribution(m.project) && (
+                      <p className="text-[10px] text-slate-500 mt-1 flex items-center gap-1">Задачи и сроки <ChevronRight size={10} /></p>
+                    )}
+                  </button>
                 ))}
               </div>
             </div>
@@ -562,6 +622,53 @@ export default function Team() {
                   )}
                 </div>
               )) : <p className="text-xs text-slate-500">Нет сертификатов</p>}
+            </div>
+          </div>
+
+          {/* Project history & ratings */}
+          <div className="mb-4">
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Проекты и оценки</h4>
+              {ratedHistory.length > 0 && (
+                <span className="flex items-center gap-1 text-xs font-bold text-amber-400" title={`Средняя оценка по ${ratedHistory.length} проектам`}>
+                  <Star size={12} className="fill-amber-400" /> {avgStars.toFixed(1)}
+                </span>
+              )}
+            </div>
+            <div className="space-y-2">
+              {history.length > 0 ? history.map(item => (
+                <button
+                  key={item.id} type="button" onClick={() => setContributionProject(item.project)}
+                  disabled={!canOpenContribution(item.project)}
+                  title={canOpenContribution(item.project) ? 'Что сотрудник сделал в проекте' : 'Задачи видны участникам проекта с правом «Все задачи»'}
+                  className="w-full text-left p-2 bg-slate-800/40 border border-slate-800 rounded-lg enabled:hover:border-violet-500/40 disabled:cursor-default transition-colors"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-slate-200 truncate">{item.project_name}</p>
+                      <p className="text-[10px] text-slate-500 mt-0.5">{item.role}</p>
+                    </div>
+                    {item.stars ? (
+                      <span className="flex items-center gap-0.5 flex-shrink-0" title={`Оценка ${item.stars} из 5`}>
+                        {[1, 2, 3, 4, 5].map(n => (
+                          <Star key={n} size={11} className={n <= Math.round(item.stars!) ? 'fill-amber-400 text-amber-400' : 'text-slate-700'} />
+                        ))}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-slate-600 flex-shrink-0">не оценён</span>
+                    )}
+                  </div>
+                  {item.comment && <p className="text-[11px] text-slate-400 mt-1.5 leading-relaxed">«{item.comment}»</p>}
+                  {item.rated_at && (
+                    <p className="text-[10px] text-slate-600 mt-1">
+                      Оценено {new Date(item.rated_at).toLocaleDateString('ru-RU')}{item.rated_by_name ? ` · ${item.rated_by_name}` : ''}
+                    </p>
+                  )}
+                  {canOpenContribution(item.project) && (
+                    <p className="text-[10px] text-slate-500 mt-1 flex items-center gap-1">Задачи и сроки <ChevronRight size={10} /></p>
+                  )}
+                </button>
+              )) : <p className="text-xs text-slate-500">Завершённых проектов пока нет</p>}
             </div>
           </div>
 
