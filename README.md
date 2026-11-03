@@ -1,27 +1,37 @@
-# Project Management System
+# Система управления проектами (PMS)
 
-A project and workflow management application with employee matching, reusable planning blocks, project/task tracking, workflow templates, and notifications.
+Веб-приложение для управления проектами, задачами и рабочими процессами. Включает подбор сотрудников, шаблоны процессов, уведомления и ИИ-помощника.
 
-## Tech stack
+## Технологии
 
-- Backend: Django and Django REST Framework
-- Frontend: React, TypeScript, and Vite
-- Data/services: PostgreSQL, Redis, and Celery
+- Backend: Django и Django REST Framework
+- Frontend: React, TypeScript и Vite
+- База данных: PostgreSQL
+- Фоновые задачи: Celery и Redis
 
-## Run locally
+## Быстрый запуск на Windows
 
-1. Install Python and Node.js, then create a Python virtual environment.
-2. Install backend dependencies with `pip install -r requirements.txt`.
-3. Copy `.env.example` to `.env` and set your local database settings and a unique Django secret key.
-4. Start PostgreSQL and Redis. To start the local PostgreSQL container, run `docker compose up -d db`.
-5. Apply migrations and start Django:
+1. Установите Python, Node.js и [Docker Desktop](https://www.docker.com/products/docker-desktop/).
+2. Скопируйте `.env.example` в `.env` и задайте локальный пароль базы данных. Не добавляйте `.env` в Git.
+3. В `.env` установите `DB_PORT=5433`, чтобы не конфликтовать с локальным PostgreSQL.
+4. В корне проекта запустите PostgreSQL:
 
    ```powershell
+   docker compose up -d db
+   docker compose ps
+   ```
+
+5. В другом терминале установите Python-зависимости, примените миграции и запустите backend:
+
+   ```powershell
+   python -m venv venv
+   .\venv\Scripts\Activate.ps1
+   pip install -r requirements.txt
    python manage.py migrate
    python manage.py runserver
    ```
 
-6. In another terminal, start the frontend:
+6. В третьем терминале запустите frontend:
 
    ```powershell
    cd frontend
@@ -29,12 +39,28 @@ A project and workflow management application with employee matching, reusable p
    npm run dev
    ```
 
-The frontend is available at <http://localhost:5173> and the backend at <http://localhost:8000>.
+Frontend: <http://localhost:5173> · Backend: <http://localhost:8000>
 
-## Documentation
+> Docker Compose в этом проекте запускает только PostgreSQL. Django и frontend запускаются в Windows. Он создаёт отдельную пустую базу и не подключается автоматически к вашим прежним локальным базам.
 
-- [Installation (English)](INSTALLATION.md)
-- [Installation (Russian)](INSTALLATION_RU.md)
-- [Deployment](DEPLOYMENT.md)
-- [Running with old and synthetic data](RUN_OLD_AND_NEW_DATA.md)
-- [Documentation index](INDEX.md)
+## Docker простыми словами
+
+- **Образ (image)** — шаблон, из которого Docker создаёт контейнер.
+- **Контейнер (container)** — запущенный экземпляр PostgreSQL.
+- **Порт** `5433:5432` связывает порт Windows `5433` с портом PostgreSQL `5432` внутри контейнера.
+- **Том (volume)** `postgres_data` хранит данные отдельно от контейнера. Перезапуск контейнера не удаляет базу.
+- **Compose** читает `docker-compose.yml` и управляет сервисами проекта.
+
+Полезные команды из корня проекта:
+
+```powershell
+docker compose up -d db          # запустить базу в фоне
+docker compose ps                # показать состояние контейнеров
+docker compose logs -f db        # смотреть журнал; Ctrl+C завершает просмотр
+docker compose stop db           # остановить контейнер, сохранив данные
+docker compose start db          # снова запустить остановленный контейнер
+docker compose down              # удалить контейнер, но сохранить том с данными
+docker compose down -v           # удалить также том и ВСЮ базу проекта
+```
+
+Для подробной инструкции см. [установку на русском](INSTALLATION_RU.md), [справочник команд](QUICK_REFERENCE.md) и [индекс документации](INDEX.md).

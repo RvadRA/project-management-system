@@ -66,78 +66,41 @@
 
 ---
 
-## 🚀 БЫСТРЫЙ СТАРТ (4 шага)
+## 🚀 БЫСТРЫЙ СТАРТ
 
-### 1️⃣ Установка (15 минут)
+Подробная инструкция для Windows, включая настройку `.env`, запуск PostgreSQL через Docker Compose, миграции и запуск backend/frontend, приведена в [INSTALLATION_RU.md](INSTALLATION_RU.md).
 
-**Вариант A: Docker (рекомендуется)**
+В этом проекте Docker Compose запускает **только PostgreSQL**. Django, React, Celery и Redis не запускаются контейнерами. Для локальной разработки:
 
-```bash
-git clone <URL> project_management_system
-cd project_management_system
-docker-compose up -d
-source venv/Scripts/activate
-python manage.py migrate
-python manage.py createsuperuser
-```
+1. Создайте локальный `.env` на основе `.env.example` и настройте параметры базы данных.
+2. Запустите базу из корня проекта:
 
-**Вариант B: Локальная установка**
+   ```powershell
+   docker compose up -d db
+   docker compose ps
+   ```
 
-```bash
-git clone <URL> project_management_system
-cd project_management_system
-python -m venv venv
-source venv/Scripts/activate  # или .\venv\Scripts\Activate.ps1 (Windows)
-pip install -r requirements.txt
-python manage.py migrate
-python manage.py createsuperuser
-```
+3. Активируйте Python-окружение, установите зависимости, примените миграции и запустите backend:
 
-### 2️⃣ Запуск (4 терминала)
+   ```powershell
+   .\venv\Scripts\Activate.ps1
+   pip install -r requirements.txt
+   python manage.py migrate
+   python manage.py createsuperuser
+   python manage.py runserver
+   ```
 
-**Терминал 1 - Backend:**
+4. В отдельном терминале запустите frontend:
 
-```bash
-source venv/Scripts/activate
-python manage.py runserver
-```
+   ```powershell
+   cd frontend
+   npm install
+   npm run dev
+   ```
 
-**Терминал 2 - Celery Worker:**
+Интерфейс: <http://localhost:5173> · Backend: <http://localhost:8000> · Admin: <http://localhost:8000/admin/>
 
-```bash
-source venv/Scripts/activate
-celery -A config worker -l info -P eventlet
-```
-
-**Терминал 3 - Celery Beat:**
-
-```bash
-source venv/Scripts/activate
-celery -A config beat -l info
-```
-
-**Терминал 4 - Frontend:**
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-### 3️⃣ Доступ
-
-| Сервис         | URL                                | Учетные данные   |
-| -------------- | ---------------------------------- | ---------------- |
-| 🎨 Приложение  | http://localhost:5173              | admin / admin123 |
-| 🔧 Admin Panel | http://localhost:8000/admin/       | admin / admin123 |
-| 📖 API Swagger | http://localhost:8000/api/swagger/ | -                |
-
-### 4️⃣ Следующие шаги
-
-1. Изучите функциональность в приложении
-2. Попробуйте создать проект
-3. Добавьте сотрудников
-4. Создайте бизнес-процесс из шаблона
+Новая Docker-база изолирована от прежних локальных баз. Учётную запись администратора нужно создать самостоятельно командой `createsuperuser`.
 
 ---
 

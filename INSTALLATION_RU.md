@@ -43,90 +43,91 @@
 
 ---
 
-## 🐳 Быстрый старт (Docker - рекомендуется)
+## 🐳 Быстрый старт (PostgreSQL в Docker)
 
-### Шаг 1: Установка Docker
+> В текущем `docker-compose.yml` контейнером запускается только PostgreSQL. Django, React, Celery и Redis не упакованы в Docker: приложение запускается локально по инструкциям ниже.
 
-1. Скачайте [Docker Desktop](https://www.docker.com/products/docker-desktop)
-2. Установите и запустите
-3. Проверьте установку в терминале:
-   ```bash
-   docker --version
-   docker-compose --version
-   ```
+### Шаг 1: Проверьте требования Windows
 
-### Шаг 2: Клонирование проекта
+Установите Docker Desktop по [официальной инструкции](https://docs.docker.com/desktop/setup/install/windows-install/) и включите backend WSL 2. По актуальным требованиям Docker Desktop необходима Windows 11 версии 23H2 (сборка 22631) или новее либо Windows 10 версии 22H2 (сборка 19045), а также включённая аппаратная виртуализация.
 
-```bash
-git clone <https://github.com/RvadRA/project-management-system.git> project_management_system
-cd project_management_system
+После установки откройте Docker Desktop, дождитесь запуска движка и в PowerShell проверьте:
+
+```powershell
+docker --version
+docker compose version
+docker info
 ```
 
-### Шаг 3: Запуск всех сервисов через Docker
+### Шаг 2: Подготовьте локальные настройки
 
-```bash
-# Запуск PostgreSQL через Docker Compose
-docker-compose up -d
+В PowerShell из корня проекта:
 
-# Ожидание 5-10 секунд для инициализации БД
-sleep 10
+```powershell
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+```
 
-# Активация виртуального окружения Python
-source venv/Scripts/activate  # Windows (Git Bash)
-# или
-.\venv\Scripts\Activate.ps1   # Windows (PowerShell)
-# или
-source venv/bin/activate      # macOS/Linux
+Откройте `.env` и задайте параметры для **новой базы проекта в Docker**:
 
-# Применение миграций БД
+```dotenv
+DJANGO_DEBUG=True
+DJANGO_SECRET_KEY=<уникальный локальный ключ>
+DB_NAME=pms_db
+DB_USER=pms_user
+DB_PASSWORD=<уникальный локальный пароль>
+DB_HOST=localhost
+DB_PORT=5433
+```
+
+Создайте Django-ключ командой `python manage.py generate_secret_key` и скопируйте его результат в `.env`. Не публикуйте и не отправляйте файл `.env`.
+
+### Шаг 3: Запустите контейнер с PostgreSQL
+
+Команды выполняются из папки с `docker-compose.yml`:
+
+```powershell
+docker compose up -d db
+docker compose ps
+docker compose logs -f db
+```
+
+Дождитесь состояния `healthy`. Комбинация портов `5433:5432` подключает приложение на Windows к PostgreSQL в контейнере и позволяет не конфликтовать с PostgreSQL, уже работающим на порту 5432.
+
+### Шаг 4: Запустите backend и frontend в Windows
+
+В первом терминале:
+
+```powershell
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 python manage.py migrate
-
-# Создание суперпользователя
 python manage.py createsuperuser
-
-# Загрузка тестовых данных (опционально)
-python manage.py seed_data
-python manage.py seed_enterprise_data
-python populate_templates.py
-```
-
-### Шаг 4: Запуск приложения
-
-**Откройте 4 разных терминала:**
-
-**Терминал 1 - Backend:**
-
-```bash
-source venv/Scripts/activate
 python manage.py runserver
-# Приложение доступно: http://localhost:8000
-# API доступен: http://localhost:8000/api/
-# Admin: http://localhost:8000/admin/
 ```
 
-**Терминал 2 - Celery Worker:**
+Миграции и создание администратора нужны при первом запуске новой пустой базы. Во втором терминале:
 
-```bash
-source venv/Scripts/activate
-pip install eventlet
-celery -A config worker -l info -P eventlet
-```
-
-**Терминал 3 - Celery Beat (планировщик):**
-
-```bash
-source venv/Scripts/activate
-celery -A config beat -l info
-```
-
-**Терминал 4 - Frontend:**
-
-```bash
+```powershell
 cd frontend
 npm install
 npm run dev
-# Приложение доступно: http://localhost:5173
 ```
+
+Откройте <http://localhost:5173>. Backend доступен по адресу <http://localhost:8000>.
+
+### Часто используемые команды Docker
+
+```powershell
+docker compose ps                # состояние сервисов
+docker compose logs -f db        # журнал PostgreSQL; Ctrl+C закрывает только журнал
+docker compose stop db           # остановить базу, сохранив данные
+docker compose start db          # снова запустить базу
+docker compose down              # удалить контейнер, но сохранить данные в томе
+docker compose down -v           # УДАЛИТЬ также том и всю базу этого Compose-проекта
+```
+
+PostgreSQL хранит данные в томе `postgres_data`. Команда `down -v` удалит этот том безвозвратно. Эти команды не изменяют отдельные локальные базы PostgreSQL и не импортируют в контейнер `pms_db` или `pms_synthv2_test`.
 
 ---
 
