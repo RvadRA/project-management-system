@@ -71,15 +71,15 @@ if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 
 ```dotenv
 DJANGO_DEBUG=True
-DJANGO_SECRET_KEY=<уникальный локальный ключ>
+DJANGO_SECRET_KEY='<вставьте сгенерированный ключ>'
 DB_NAME=pms_db
 DB_USER=pms_user
-DB_PASSWORD=<уникальный локальный пароль>
+DB_PASSWORD='<ваш локальный пароль>'
 DB_HOST=localhost
 DB_PORT=5433
 ```
 
-Создайте Django-ключ командой `python manage.py generate_secret_key` и скопируйте его результат в `.env`. Не публикуйте и не отправляйте файл `.env`.
+Создайте Django-ключ командой `python manage.py generate_secret_key` и вставьте его вместо примера. Одинарные кавычки нужны, чтобы символ `$` (если он есть в ключе или пароле) не интерпретировался Docker Compose как ссылка на переменную. Файл `.env` не публикуйте и не отправляйте.
 
 ### Шаг 3: Запустите контейнер с PostgreSQL
 

@@ -12,9 +12,20 @@
 ## Быстрый запуск на Windows
 
 1. Установите Python, Node.js и [Docker Desktop](https://www.docker.com/products/docker-desktop/).
-2. Скопируйте `.env.example` в `.env` и задайте локальный пароль базы данных. Не добавляйте `.env` в Git.
-3. В `.env` установите `DB_PORT=5433`, чтобы не конфликтовать с локальным PostgreSQL.
-4. В корне проекта запустите PostgreSQL:
+2. Скопируйте `.env.example` в `.env`, создайте Django-ключ командой `python manage.py generate_secret_key` и задайте локальные параметры:
+
+   ```dotenv
+   DJANGO_DEBUG=True
+   DJANGO_SECRET_KEY='вставьте-сгенерированный-ключ'
+   DB_NAME=pms_db
+   DB_USER=pms_user
+   DB_PASSWORD='ваш-локальный-пароль'
+   DB_HOST=localhost
+   DB_PORT=5433
+   ```
+
+   Одинарные кавычки сохраняют символы `$` буквально. Не добавляйте `.env` в Git.
+3. В корне проекта запустите PostgreSQL:
 
    ```powershell
    docker compose up -d db
