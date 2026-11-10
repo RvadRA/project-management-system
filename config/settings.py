@@ -228,7 +228,7 @@ INTEGRATION_ALLOWED_HOSTS = env_list('INTEGRATION_ALLOWED_HOSTS', '')
 # ---------------------------------------------------------------------------
 # i18n / TZ
 # ---------------------------------------------------------------------------
-LANGUAGE_CODE = 'en-us'
+LANGUAGE_CODE = 'ru-ru'
 TIME_ZONE = 'UTC'
 USE_I18N = True
 USE_TZ = True

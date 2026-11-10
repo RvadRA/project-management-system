@@ -339,7 +339,7 @@ export default function Workflows() {
     if (!isManager || !editingTask) return;
     
     if (!editingTask.sla_hours || editingTask.sla_hours <= 0) {
-      toast.error("SLA должен быть больше 0");
+      toast.error("Срок выполнения должен быть больше 0");
       return;
     }
     setSubmittingTask(true);
@@ -642,7 +642,7 @@ export default function Workflows() {
                             <p className="text-xs text-slate-400 leading-normal mb-2.5 line-clamp-2">{task.description}</p>
                           )}
                           
-                          {/* Отсчёт SLA идёт с момента перехода задачи в работу, а не с создания процесса */}
+                          {/* Срок отсчитывается с момента перехода задачи в работу, а не с создания процесса */}
                           {(() => {
                             const ratio = slaRatio(task);
                             const pct = ratio === null ? 0 : Math.min(100, ratio * 100);
@@ -650,7 +650,7 @@ export default function Workflows() {
                             return (
                               <div className="mb-3">
                                 <div className="flex justify-between items-center mb-1">
-                                  <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider">SLA</span>
+                                  <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider">Срок</span>
                                   <span className={`text-[9px] font-bold ${late ? 'text-red-400' : 'text-slate-500'}`}>
                                     {slaLabel(task)}
                                   </span>
@@ -689,8 +689,8 @@ export default function Workflows() {
                               <span className="text-xs text-slate-500">{task.assigned_to_name || 'Не назначен'}</span>
                             </div>
                             <div className="flex items-center gap-1.5 border-l border-slate-800 pl-2 ml-2">
-                              <span className="text-[10px] text-slate-600 font-bold uppercase tracking-tighter" title="Срок выполнения (SLA) и оценка трудозатрат">
-                                SLA {task.sla_hours} ч{task.estimated_hours > 0 ? ` · труд ${task.estimated_hours} ч` : ''}
+                              <span className="text-[10px] text-slate-600 font-bold uppercase tracking-tighter" title="Нормативный срок и оценка трудозатрат">
+                                Срок {task.sla_hours} ч{task.estimated_hours > 0 ? ` · труд ${task.estimated_hours} ч` : ''}
                               </span>
                             </div>
                           </div>
@@ -1039,7 +1039,7 @@ export default function Workflows() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">SLA (часов)</label>
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Срок выполнения (часы)</label>
                   <input 
                     type="number" required
                     value={taskTemplateFormData.sla_hours}
@@ -1087,7 +1087,7 @@ export default function Workflows() {
                   <span className="text-xs text-slate-300 leading-snug">Без проверки менеджером<span className="block text-[11px] text-slate-500">закрывается сразу после сдачи</span></span>
                 </label>
                 <p className="col-span-full text-[11px] text-slate-500 -mt-2">
-                  SLA — через сколько часов после старта шаг нужно сдать. Трудозатраты — сколько часов работы он требует.
+                  Срок выполнения — через сколько часов после начала этап нужно завершить. Трудозатраты — сколько часов работы он требует.
                   Шаги идут по порядку; связи между шагами и параллельные ветки настраиваются в визуальном редакторе.
                 </p>
                 <div className="col-span-full">
@@ -1107,7 +1107,7 @@ export default function Workflows() {
                       <Zap size={14} /> Настройки интеграции
                    </div>
                    <div>
-                      <label className="block text-[10px] text-slate-500 mb-1.5 font-bold uppercase">Webhook URL</label>
+                      <label className="block text-[10px] text-slate-500 mb-1.5 font-bold uppercase">Адрес вебхука (URL)</label>
                       <input 
                         type="url"
                         value={taskTemplateFormData.integration_url || ''}
@@ -1117,7 +1117,7 @@ export default function Workflows() {
                       />
                    </div>
                    <div>
-                      <label className="block text-[10px] text-slate-500 mb-1.5 font-bold uppercase">JSON Config (headers/timeout)</label>
+                      <label className="block text-[10px] text-slate-500 mb-1.5 font-bold uppercase">Параметры JSON (заголовки и тайм-аут)</label>
                       <textarea 
                         value={typeof taskTemplateFormData.integration_config === 'string' ? taskTemplateFormData.integration_config : JSON.stringify(taskTemplateFormData.integration_config, null, 2)}
                         onChange={e => {
@@ -1188,7 +1188,7 @@ export default function Workflows() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs text-slate-400 mb-1.5">Срок выполнения (SLA), ч</label>
+                  <label className="block text-xs text-slate-400 mb-1.5">Нормативный срок, ч</label>
                   <input
                     type="number" min={1} max={720}
                     value={newTaskSla}
@@ -1205,7 +1205,7 @@ export default function Workflows() {
                   onChange={e => setNewTaskDueDate(e.target.value)}
                   className="w-full bg-slate-800 border border-slate-700 text-slate-200 text-sm rounded-lg px-3 py-2.5 focus:outline-none focus:border-violet-500"
                 />
-                <p className="text-[10px] text-slate-500 mt-1">Хранится отдельно от SLA; если не указан, срок считается по SLA.</p>
+                <p className="text-[10px] text-slate-500 mt-1">Хранится отдельно от норматива процесса; если не указан, срок определяется им.</p>
               </div>
               <div>
                 <label className="block text-xs text-slate-400 mb-1.5">Трудозатраты, ч <span className="text-slate-600">(сколько реально работы — идёт в загрузку исполнителя)</span></label>
@@ -1307,7 +1307,7 @@ export default function Workflows() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs text-slate-400 mb-1.5">Срок выполнения (SLA), ч</label>
+                  <label className="block text-xs text-slate-400 mb-1.5">Нормативный срок, ч</label>
                   <input
                     type="number" required
                     value={editingTask.sla_hours}
@@ -1327,7 +1327,7 @@ export default function Workflows() {
                   onChange={e => setEditingTask({ ...editingTask, due_date: e.target.value })}
                   className="w-full bg-slate-800 border border-slate-700 text-slate-200 text-sm rounded-lg px-3 py-2.5 focus:outline-none focus:border-violet-500"
                 />
-                <p className="text-[10px] text-slate-500 mt-1">Хранится отдельно от SLA; если не указан, срок считается по SLA.</p>
+                <p className="text-[10px] text-slate-500 mt-1">Хранится отдельно от норматива процесса; если не указан, срок определяется им.</p>
               </div>
               <div>
                 <label className="block text-xs text-slate-400 mb-1.5">Трудозатраты, ч <span className="text-slate-600">(идут в загрузку исполнителя)</span></label>

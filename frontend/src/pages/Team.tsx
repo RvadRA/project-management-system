@@ -8,6 +8,7 @@ import ContributionModal from '../components/ContributionModal';
 import { toast } from 'react-hot-toast';
 import { niceConfirm } from '../utils/confirm';
 import api from '../api/client';
+import { skillCategoryLabel } from '../utils/localization';
 
 const levelLabels = ['', 'Нач.', 'Баз.', 'Сред.', 'Прод.', 'Эксп.'];
 const categoryColors: Record<string, string> = {
@@ -858,16 +859,16 @@ export default function Team() {
                 </div>
               </div>
               <div>
-                <label className="block text-xs text-slate-400 mb-1.5">Username (логин)</label>
+                <label className="block text-xs text-slate-400 mb-1.5">Имя пользователя (логин)</label>
                 <input type="text" required value={formUsername} onChange={e => setFormUsername(e.target.value)}
                   className="w-full bg-slate-800 border border-slate-700 text-slate-200 text-sm rounded-lg px-3 py-2.5 focus:outline-none focus:border-violet-500"
-                  placeholder="i.ivanov" />
+                  placeholder="и.иванов" />
               </div>
               <div>
-                <label className="block text-xs text-slate-400 mb-1.5">Email</label>
+                <label className="block text-xs text-slate-400 mb-1.5">Электронная почта</label>
                 <input type="email" required value={formEmail} onChange={e => setFormEmail(e.target.value)}
                   className="w-full bg-slate-800 border border-slate-700 text-slate-200 text-sm rounded-lg px-3 py-2.5 focus:outline-none focus:border-violet-500"
-                  placeholder="ivan@company.com" />
+                  placeholder="ivan@example.com" />
               </div>
               <div>
                 <label className="block text-xs text-slate-400 mb-1.5">Пароль</label>
@@ -879,7 +880,7 @@ export default function Team() {
                   <label className="block text-xs text-slate-400 mb-1.5">Должность</label>
                   <input type="text" value={formPosition} onChange={e => setFormPosition(e.target.value)}
                     className="w-full bg-slate-800 border border-slate-700 text-slate-200 text-sm rounded-lg px-3 py-2.5 focus:outline-none focus:border-violet-500"
-                    placeholder="Developer" />
+                    placeholder="Разработчик" />
                 </div>
               </div>
 
@@ -914,7 +915,7 @@ export default function Team() {
                     className="flex-1 bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-lg px-2 py-2 focus:outline-none focus:border-violet-500"
                   >
                     <option value="">— Навык —</option>
-                    {skills.map(s => <option key={s.id} value={s.id}>{s.name} ({s.category})</option>)}
+                    {skills.map(s => <option key={s.id} value={s.id}>{s.name} ({skillCategoryLabel(s.category)})</option>)}
                   </select>
                   <select
                     value={selectedSkillLevel}

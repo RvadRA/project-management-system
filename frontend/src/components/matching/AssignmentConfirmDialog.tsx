@@ -146,10 +146,10 @@ export default function AssignmentConfirmDialog({ request, submitting, onCancel,
                 <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
                 <span>
                   {request.deadlineStatus === 'overdue'
-                    ? 'Дедлайн задачи уже просрочен. Период назначения рассчитан по SLA — проверьте актуальность срока.'
+                    ? 'Срок задачи уже истёк. Период назначения рассчитан по нормативному сроку — проверьте актуальность даты.'
                     : request.deadlineStatus === 'today'
-                      ? 'Дедлайн задачи истекает сегодня. Период назначения рассчитан по SLA.'
-                      : 'Дедлайн задачи не задан. Период назначения рассчитан по SLA-fallback.'}
+                      ? 'Срок задачи истекает сегодня. Период назначения рассчитан по нормативному сроку.'
+                      : 'Срок задачи не задан. Период назначения рассчитан по нормативному сроку.'}
                 </span>
               </p>
             </div>
@@ -160,7 +160,7 @@ export default function AssignmentConfirmDialog({ request, submitting, onCancel,
               <p className="flex items-start gap-2">
                 <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
                 <span>
-                  За период нет подтверждённых записей WorkloadEntry. Загрузка рассчитана по календарю
+                  За период нет подтверждённых записей о загрузке. Загрузка рассчитана по календарю
                   и может быть неточной.
                 </span>
               </p>

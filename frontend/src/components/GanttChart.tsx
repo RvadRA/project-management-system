@@ -179,7 +179,7 @@ export default function GanttChart({ blocks, projectStartDate, projectEndDate }:
     setExporting(true);
     try {
       await exportElementToPDF('gantt-chart-container', 'gantt-chart');
-      toast.success('Gantt экспортирован в PDF');
+      toast.success('Диаграмма Ганта выгружена в PDF');
     } catch (err: any) {
       console.error('Gantt export error:', err);
       toast.error(`Ошибка при экспорте: ${err?.message || 'Неизвестная ошибка'}`);

@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { AlertTriangle, ChevronDown, ChevronUp, TrendingUp, X, Zap } from 'lucide-react';
 import api from '../api/client';
 import { useAppContext } from '../context/AppContext';
+import { complexityLabel, skillCategoryLabel, taskTypeLabel } from '../utils/localization';
 import MemberRoleSelect from '../components/MemberRoleSelect';
 import AllocationInput from '../components/AllocationInput';
 import AssignmentConfirmDialog from '../components/matching/AssignmentConfirmDialog';
@@ -477,7 +478,7 @@ export default function Matching() {
                 </select>
                 <p className="text-[10px] text-slate-500 leading-relaxed mt-2">
                   Навыки определяются по тексту задачи, домен и бюджет берутся из её проекта. Период —
-                  до дедлайна; если дедлайн сегодня, просрочен или не задан, используется SLA-расчёт.
+                  до срока выполнения; если срок истекает сегодня, просрочен или не задан, используется нормативный период.
                 </p>
               </div>
             ) : (
@@ -550,7 +551,7 @@ export default function Matching() {
                     >
                       <option value="">— Добавить навык из базы —</option>
                       {skillsFromContext.filter(s => !skills.some(x => x.name === s.name)).map(s => (
-                        <option key={s.id} value={s.name}>{s.name} ({s.category})</option>
+                        <option key={s.id} value={s.name}>{s.name} ({skillCategoryLabel(s.category)})</option>
                       ))}
                     </select>
                   </div>
@@ -654,9 +655,9 @@ export default function Matching() {
                   </p>
                   <p className="mt-0.5">
                     Дедлайн задачи: {taskMatchContext.dueDate ? formatDateKey(taskMatchContext.dueDate) : 'не задан'}
-                    {taskMatchContext.deadlineStatus === 'overdue' && ' · просрочен, период рассчитан по SLA'}
-                    {taskMatchContext.deadlineStatus === 'today' && ' · истекает сегодня, период рассчитан по SLA'}
-                    {taskMatchContext.deadlineStatus === 'missing' && ' · применён SLA-fallback'}
+                    {taskMatchContext.deadlineStatus === 'overdue' && ' · просрочен, период рассчитан по нормативному сроку'}
+                    {taskMatchContext.deadlineStatus === 'today' && ' · истекает сегодня, период рассчитан по нормативному сроку'}
+                    {taskMatchContext.deadlineStatus === 'missing' && ' · период рассчитан по нормативному сроку'}
                   </p>
                 </div>
               )}
@@ -677,14 +678,14 @@ export default function Matching() {
               {matchingMode === 'task' && aiRequirements && (
                 <div className="space-y-2">
                   <div className="rounded-lg border border-violet-500/20 bg-violet-500/5 px-4 py-3 text-xs text-slate-300">
-                    <span className="font-semibold text-violet-300">AI task analysis:</span>{' '}
+                    <span className="font-semibold text-violet-300">Анализ задачи ИИ:</span>{' '}
                     {aiRequirements.skills.length
                       ? aiRequirements.skills.join(', ')
                       : <span className="text-amber-300">навыки не извлечены — фильтр компетенций не применялся</span>}
-                    {' · '}{aiRequirements.task_type} · {aiRequirements.complexity}
+                    {' · '}{taskTypeLabel(aiRequirements.task_type)} · {complexityLabel(aiRequirements.complexity)}
                     {aiRequirements.skills_source === 'catalog_text_fallback' && (
                       <span title="LLM не вернул подтверждённые навыки; использован поиск по каталогу в тексте задачи">
-                        {' '}· fallback по каталогу
+                        {' '}· резервный поиск по каталогу
                       </span>
                     )}
                     {aiScoring?.total_considered != null && (

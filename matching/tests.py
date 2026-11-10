@@ -136,7 +136,7 @@ class AvailabilityTests(ScoringTestCase):
         WorkloadEntry.objects.create(employee=emp, start_date=datetime.date(2031, 1, 1),
                                      end_date=datetime.date(2031, 6, 1), load_percent=100)
         result = self.score_of(emp)
-        self.assertEqual(result.availability, 1.0)
+        self.assertEqual(result.availability, 0.5)
         # Отсутствие записей в периоде нельзя выдавать за подтверждённые 100% свободного времени.
         self.assertFalse(result.details['availability']['workload_known'])
         self.assertIsNone(result.details['availability']['free_percent'])
@@ -158,7 +158,8 @@ class AvailabilityTests(ScoringTestCase):
         result = self.score_of(emp)
         self.assertEqual(result.details['availability']['unavailable_days'], 8)
         self.assertEqual(result.details['availability']['available_hours'], 96.0)
-        self.assertAlmostEqual(result.availability, 12 / 20, places=3)
+        # При неизвестной загрузке нейтральная оценка умножается на долю рабочих дней без отпуска.
+        self.assertAlmostEqual(result.availability, 0.5 * (12 / 20), places=3)
 
     def test_finished_projects_do_not_occupy_people(self):
         emp = self.make_employee('after')
@@ -166,7 +167,9 @@ class AvailabilityTests(ScoringTestCase):
         cancelled = Project.objects.create(name='Cancelled', status='CANCELLED')
         for project in (done, cancelled):
             WorkloadEntry.objects.create(employee=emp, project=project, start_date=START, end_date=END, load_percent=100)
-        self.assertEqual(self.score_of(emp).availability, 1.0)
+        result = self.score_of(emp)
+        self.assertEqual(result.availability, 0.5)
+        self.assertFalse(result.details['availability']['workload_known'])
         self.assertEqual(emp.current_workload_percentage, 0)
 
     def test_calendar_holidays_are_not_working_days(self):

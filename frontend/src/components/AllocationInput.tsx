@@ -36,7 +36,7 @@ interface Props {
   compact?: boolean;
   /** Период задаётся задачей и не редактируется вручную */
   periodLocked?: boolean;
-  /** false — за период нет подтверждённых записей WorkloadEntry */
+  /** false — за период нет подтверждённых записей о загрузке */
   availabilityConfirmed?: boolean;
 }
 
@@ -173,14 +173,14 @@ export default function AllocationInput({
               <p className="flex items-start gap-1.5 text-amber-300">
                 <AlertTriangle size={11} className="flex-shrink-0 mt-0.5" />
                 <span>
-                  За период нет записей WorkloadEntry. Показанная ёмкость рассчитана по календарю
+                  За период нет записей о загрузке. Показанная ёмкость рассчитана по календарю
                   и не является подтверждённой доступностью сотрудника.
                 </span>
               </p>
             )}
 
             {availabilityConfirmed === true && (
-              <p className="text-emerald-400/80">Загрузка подтверждена записями WorkloadEntry.</p>
+              <p className="text-emerald-400/80">Загрузка подтверждена записями о занятости.</p>
             )}
 
             {capacity.from_tasks_percent !== null && (

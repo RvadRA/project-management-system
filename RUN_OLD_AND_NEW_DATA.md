@@ -35,10 +35,12 @@ Set `VITE_API_URL` in your local frontend environment to the backend URL you are
 
 ## 1. Current data state
 
-| Dataset | Database | Users | Profiles | Projects | Tasks | Workloads | Participations | Unavailability |
-|---|---|---:|---:|---:|---:|---:|---:|---:|
-| Old development data | `pms_db` | 20 | 19 | 16 | 65 | 14 | 3 | 0 |
-| Synthetic-v2 | `pms_synthv2_test` | 31 | 30 | 55 | 726 | 46 | 128 | 31 |
+| Dataset | Database | Users | Profiles | Projects | Project tasks | Workflow tasks | Workloads | Participations | Unavailability |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Old development data | `pms_db` | 20 | 19 | 16 | 133 | 65 | 14 | 3 | 0 |
+| Synthetic-v2 | `pms_synthv2_test` | 31 | 30 | 55 | 0 | 728 | 47 | 128 | 31 |
+
+Counts were checked against the local PostgreSQL databases on 2026-11-10; they can change as the application data changes. The Docker PostgreSQL service is a separate, empty database and is not included in this table.
 
 Notes:
 

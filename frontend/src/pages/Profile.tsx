@@ -110,7 +110,7 @@ export default function Profile() {
             </div>
 
             <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Email</label>
+              <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Электронная почта</label>
               <div className="relative">
                 <Mail size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
                 <input 
@@ -130,7 +130,7 @@ export default function Profile() {
             </h2>
             <div className="space-y-4">
               <div className="flex justify-between items-center">
-                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Telegram Chat ID</label>
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">ID чата Telegram</label>
                 <a 
                   href="https://t.me/userinfobot" 
                   target="_blank" 
@@ -151,7 +151,7 @@ export default function Profile() {
                 />
               </div>
               <p className="text-[11px] text-slate-500 px-1 leading-relaxed">
-                Введите ваш Chat ID для получения мгновенных уведомлений. Наш бот: <span className="text-blue-400 font-bold">@pms_notifications_bot</span>
+                Введите ID чата для получения мгновенных уведомлений. Наш бот: <span className="text-blue-400 font-bold">@pms_notifications_bot</span>
               </p>
             </div>
           </div>
@@ -212,7 +212,7 @@ export default function Profile() {
                     <Mail size={16} />
                   </div>
                   <div>
-                    <p className="text-sm font-semibold text-white">Email</p>
+                    <p className="text-sm font-semibold text-white">Электронная почта</p>
                     <p className="text-[10px] text-slate-500">Важные отчеты</p>
                   </div>
                 </div>
@@ -264,7 +264,7 @@ export default function Profile() {
           <div className="bg-slate-900/30 border border-slate-800 rounded-2xl p-4 flex items-start gap-3">
             <AlertCircle size={16} className="text-violet-400 mt-0.5" />
             <p className="text-[11px] text-slate-500 leading-relaxed">
-              Все изменения вступают в силу мгновенно. Если вы не получаете уведомления, проверьте правильность Chat ID.
+              Все изменения вступают в силу мгновенно. Если вы не получаете уведомления, проверьте правильность ID чата.
             </p>
           </div>
 
@@ -274,7 +274,7 @@ export default function Profile() {
               {[
                 'Привяжите Telegram для быстрой реакции на задачи',
                 'Заполните биографию для лучшего мэтчинга в проекты',
-                'Используйте корпоративный Email для отчетности',
+                'Используйте корпоративную электронную почту для отчётности',
                 'Включите дайджест, чтобы быть в курсе плана на день'
               ].map((tip, i) => (
                 <li key={i} className="flex items-start gap-2 text-[11px] text-slate-400">

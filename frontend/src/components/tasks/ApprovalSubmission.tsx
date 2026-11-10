@@ -148,12 +148,12 @@ export function ApprovalSubmission({ task, onClose }: ApprovalSubmissionProps) {
         </div>
       )}
 
-      {/* SLA warning */}
+      {/* Предупреждение о сроке */}
       {task.is_overdue && (
         <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg flex items-center gap-2">
           <Clock size={14} className="text-amber-400" />
           <p className="text-xs text-amber-400">
-            Внимание: задача просрочена! SLA: {task.sla_hours}ч
+            Внимание: срок задачи истёк! Нормативный срок: {task.sla_hours} ч
           </p>
         </div>
       )}

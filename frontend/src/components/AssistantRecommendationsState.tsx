@@ -48,7 +48,7 @@ export default function AssistantRecommendationsState({
         <>
           <Sparkles size={20} className="text-violet-400" />
           <p className="text-sm font-medium text-slate-300">{assistantRecommendationsEmptyMessage}</p>
-          <p className="max-w-sm text-xs leading-relaxed text-slate-500">Сначала опишите или продиктуйте задачу — здесь появятся Top-3 и предупреждения по исполнителям.</p>
+          <p className="max-w-sm text-xs leading-relaxed text-slate-500">Сначала опишите или продиктуйте задачу — здесь появятся три лучших кандидата и предупреждения по исполнителям.</p>
         </>
       )}
     </section>

@@ -24,12 +24,12 @@ class GlobalSetting(models.Model):
 
 class Project(models.Model):
     STATUS_CHOICES = [
-        ('DRAFT', 'Draft'),
-        ('ACTIVE', 'Active'),
-        ('AT_RISK', 'At Risk'),
-        ('ON_HOLD', 'On Hold'),
-        ('COMPLETED', 'Completed'),
-        ('CANCELLED', 'Cancelled'),
+        ('DRAFT', 'Черновик'),
+        ('ACTIVE', 'Активен'),
+        ('AT_RISK', 'Под угрозой'),
+        ('ON_HOLD', 'Приостановлен'),
+        ('COMPLETED', 'Завершён'),
+        ('CANCELLED', 'Отменён'),
     ]
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
@@ -65,11 +65,11 @@ class Project(models.Model):
 
 class ProjectMember(models.Model):
     ROLE_CHOICES = [
-        ('MANAGER', 'Manager'),
-        ('DEVELOPER', 'Developer'),
-        ('ANALYST', 'Analyst'),
-        ('DESIGNER', 'Designer'),
-        ('QA', 'QA Engineer'),
+        ('MANAGER', 'Менеджер'),
+        ('DEVELOPER', 'Разработчик'),
+        ('ANALYST', 'Аналитик'),
+        ('DESIGNER', 'Дизайнер'),
+        ('QA', 'Тестировщик'),
     ]
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='members')
     user = models.ForeignKey(
@@ -117,7 +117,7 @@ class PlanningBlock(models.Model):
     # Metadata
     avg_duration = models.PositiveIntegerField(null=True, blank=True, help_text="Средняя длительность в днях")
     complexity = models.CharField(max_length=20, default='MEDIUM', choices=[
-        ('LOW', 'Low'), ('MEDIUM', 'Medium'), ('HIGH', 'High'), ('CRITICAL', 'Critical')
+        ('LOW', 'Низкая'), ('MEDIUM', 'Средняя'), ('HIGH', 'Высокая'), ('CRITICAL', 'Критическая')
     ])
     success_rate = models.FloatField(default=1.0, help_text="Показатель успешности (0.0 - 1.0)")
     project = models.ForeignKey(
@@ -137,17 +137,17 @@ class PlanningBlock(models.Model):
 
 class Task(models.Model):
     STATUS_CHOICES = [
-        ('TODO', 'To Do'),
-        ('IN_PROGRESS', 'In Progress'),
-        ('REVIEW', 'Review'),
-        ('DONE', 'Done'),
+        ('TODO', 'К выполнению'),
+        ('IN_PROGRESS', 'В работе'),
+        ('REVIEW', 'На проверке'),
+        ('DONE', 'Выполнено'),
     ]
     block = models.ForeignKey(PlanningBlock, on_delete=models.CASCADE, related_name='tasks')
     parent = models.ForeignKey('self', on_delete=models.CASCADE, null=True, blank=True, related_name='subtasks')
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     duration_days = models.IntegerField(default=1)
-    start_offset_days = models.IntegerField(default=0, help_text="Days after block start")
+    start_offset_days = models.IntegerField(default=0, help_text="Количество дней от начала этапа")
     start_date = models.DateField(null=True, blank=True)
     end_date = models.DateField(null=True, blank=True)
     assigned_to = models.ForeignKey(
@@ -162,11 +162,11 @@ class Task(models.Model):
     
     # New fields
     priority = models.CharField(max_length=20, default='MEDIUM', choices=[
-        ('LOW', 'Low'), ('MEDIUM', 'Medium'), ('HIGH', 'High'), ('URGENT', 'Urgent')
+        ('LOW', 'Низкий'), ('MEDIUM', 'Средний'), ('HIGH', 'Высокий'), ('URGENT', 'Срочный')
     ])
     estimated_hours = models.FloatField(default=0.0)
     risk_level = models.CharField(max_length=20, default='LOW', choices=[
-        ('LOW', 'Low'), ('MEDIUM', 'Medium'), ('HIGH', 'High')
+        ('LOW', 'Низкий'), ('MEDIUM', 'Средний'), ('HIGH', 'Высокий')
     ])
     
     workflow_task = models.OneToOneField(

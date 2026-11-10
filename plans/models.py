@@ -26,10 +26,10 @@ class Risk(models.Model):
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     probability = models.CharField(max_length=20, choices=[
-        ('LOW', 'Low'), ('MEDIUM', 'Medium'), ('HIGH', 'High')
+        ('LOW', 'Низкая'), ('MEDIUM', 'Средняя'), ('HIGH', 'Высокая')
     ], default='MEDIUM')
     impact = models.CharField(max_length=20, choices=[
-        ('LOW', 'Low'), ('MEDIUM', 'Medium'), ('HIGH', 'High')
+        ('LOW', 'Низкое'), ('MEDIUM', 'Среднее'), ('HIGH', 'Высокое')
     ], default='MEDIUM')
     mitigation = models.TextField(blank=True)
     

@@ -75,7 +75,7 @@ export const explainScore = (details: ScoreDetails): Record<string, string> => {
       ? ` Оценка открытых задач: ${taskHours} ч${unestimated ? `; без оценки: ${unestimated}` : ''}.`
       : '';
     if (a.workload_known === false) {
-      out.availability = `Записей WorkloadEntry за период нет; фактическая загрузка и свободное время не рассчитаны.${taskNote}`;
+      out.availability = `Подтверждённых записей о загрузке за период нет; фактическая загрузка и свободное время не рассчитаны.${taskNote}`;
     } else {
       const avg = a.avg_load_percent ?? 0;
       const peak = a.peak_load_percent ?? 0;
@@ -106,7 +106,7 @@ export const suggestLoad = (availability: number, details?: ScoreDetails['availa
   const conservative = (freePercent: number) =>
     Math.min(100, Math.max(5, Math.round((freePercent * 100) / 5) * 5));
   if (details?.workload_known === false) {
-    // Без WorkloadEntry не предлагаем 100%: учитываем только известные часы задач.
+    // Без подтверждённых записей о загрузке не предлагаем 100%: учитываем только известные часы задач.
     const estimated = details.task_estimated_load_percent;
     return estimated == null ? 5 : conservative(Math.max(0, 1 - estimated / 100));
   }

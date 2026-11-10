@@ -4,13 +4,13 @@ from django.conf import settings
 
 class Notification(models.Model):
     TYPE_CHOICES = [
-        ('INFO', 'Info'),
-        ('SUCCESS', 'Success'),
-        ('WARNING', 'Warning'),
-        ('ERROR', 'Error'),
-        ('TASK_ASSIGNED', 'Task Assigned'),
-        ('TASK_DEADLINE', 'Task Deadline'),
-        ('ESCALATION', 'Escalation'),
+        ('INFO', 'Информация'),
+        ('SUCCESS', 'Успешно'),
+        ('WARNING', 'Предупреждение'),
+        ('ERROR', 'Ошибка'),
+        ('TASK_ASSIGNED', 'Назначена задача'),
+        ('TASK_DEADLINE', 'Срок задачи'),
+        ('ESCALATION', 'Эскалация'),
     ]
     recipient = models.ForeignKey(
         settings.AUTH_USER_MODEL,

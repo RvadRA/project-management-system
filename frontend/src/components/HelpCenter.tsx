@@ -177,7 +177,7 @@ export function HelpCenter() {
                 <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
                 <input
                   type="text" autoFocus
-                  placeholder="Поиск: ассистент, фразы, загрузка, права, SLA…"
+                  placeholder="Поиск: помощник, фразы, загрузка, права, сроки…"
                   value={query}
                   onChange={e => { setQuery(e.target.value); if (tab === 'keys') setTab('articles'); }}
                   className="w-full bg-slate-800 border border-slate-700 text-white text-sm rounded-xl pl-10 pr-4 py-2.5 outline-none focus:border-violet-500"

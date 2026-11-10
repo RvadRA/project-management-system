@@ -43,11 +43,11 @@ export function IntegrationSubmission({ task, onClose }: IntegrationSubmissionPr
     const startTime = Date.now();
 
     try {
-      // Simulate API call (in real app, this calls your backend)
+      // Simulate the integration request.
       const result: ExecutionResult = {
         status: 'success',
         status_code: 200,
-        response_body: JSON.stringify({ message: 'Integration successful', timestamp: new Date().toISOString() }),
+        response_body: JSON.stringify({ message: 'Интеграция выполнена успешно', timestamp: new Date().toISOString() }),
         duration_ms: Date.now() - startTime,
         timestamp: new Date().toISOString(),
         attempt: attempt + 1,
@@ -61,7 +61,7 @@ export function IntegrationSubmission({ task, onClose }: IntegrationSubmissionPr
     } catch (err: any) {
       const result: ExecutionResult = {
         status: 'failure',
-        error: err.message || 'Unknown error',
+        error: err.message || 'Неизвестная ошибка',
         timestamp: new Date().toISOString(),
         attempt: attempt + 1,
       };
@@ -143,7 +143,7 @@ export function IntegrationSubmission({ task, onClose }: IntegrationSubmissionPr
         {/* URL */}
         <div className="mt-3 p-2 bg-slate-800/30 rounded-lg">
           <div className="flex items-center justify-between mb-1">
-            <p className="text-[10px] text-slate-500 uppercase">URL</p>
+            <p className="text-[10px] text-slate-500 uppercase">Адрес (URL)</p>
             <button
               onClick={() => {
                 navigator.clipboard.writeText(task.webhook_url || 'https://api.example.com/webhook');
@@ -165,7 +165,7 @@ export function IntegrationSubmission({ task, onClose }: IntegrationSubmissionPr
               className="flex items-center gap-1 text-xs text-slate-500 hover:text-white"
             >
               {showHeaders ? <EyeOff size={12} /> : <Eye size={12} />}
-              Headers ({Object.keys(task.headers).length})
+              Заголовки ({Object.keys(task.headers).length})
             </button>
             {showHeaders && (
               <div className="mt-2 p-2 bg-slate-800/30 rounded-lg font-mono text-xs">
@@ -235,7 +235,7 @@ export function IntegrationSubmission({ task, onClose }: IntegrationSubmissionPr
 
           {result.status_code && (
             <div className="mb-2">
-              <span className="text-xs text-slate-400">Status: </span>
+              <span className="text-xs text-slate-400">Статус: </span>
               <span className={`text-xs font-bold ${
                 result.status_code < 400 ? 'text-emerald-400' : 'text-red-400'
               }`}>

@@ -40,7 +40,7 @@ import {
 
 type Tab = 'task' | 'ask';
 
-/** Куда положить задачу: в идущий процесс (доска) или в план проекта (этап WBS) */
+/** Куда добавить задачу: в активный процесс (доску) или в план проекта (этап структуры работ) */
 type Destination = 'process' | 'plan';
 
 interface Attempt { provider: string; reason: string }
@@ -511,7 +511,7 @@ export function AssistantPanel() {
       if (requestId !== aiRequest.current) return;
       setAiCandidates([]);
       setAiWarnings([]);
-      setAiError(extractError(err, 'Не удалось получить Top-3.'));
+      setAiError(extractError(err, 'Не удалось получить список лучших кандидатов.'));
       setAiExcluded([]);
       setAiScoring(null);
     } finally {
@@ -680,7 +680,7 @@ export function AssistantPanel() {
       creating: creatingRef.current,
     })) return;
     if (selectedMissing) {
-      toast.error('Выбранный сотрудник больше не доступен в подборе. Обновите Top-3 и выберите исполнителя заново.');
+      toast.error('Выбранный сотрудник больше не доступен в подборе. Обновите список кандидатов и выберите исполнителя заново.');
       return;
     }
     if (!assigneeReady) {
@@ -690,7 +690,7 @@ export function AssistantPanel() {
     const requestedAssignee = form.assignee === '' ? null : Number(form.assignee);
     const selectedAssignee = selectedCandidate?.user_id ?? null;
     if (requestedAssignee !== null && requestedAssignee !== selectedAssignee) {
-      toast.error('Исполнитель не совпадает с выбранной карточкой Top-3. Выберите его заново.');
+      toast.error('Исполнитель не совпадает с выбранной карточкой кандидата. Выберите его заново.');
       return;
     }
     const assigneeForPayload: number | '' = selectedAssignee ?? '';
@@ -1149,7 +1149,7 @@ export function AssistantPanel() {
                       <p className="text-[11px] text-slate-400 leading-relaxed">
                         {created.destination === 'process'
                           ? `Где искать: «Процессы» → процесс «${created.placeName}» (проект «${created.projectName}»), колонка «К выполнению». Исполнитель увидит её в «Моём кабинете».`
-                          : `Где искать: «Проекты» → «${created.projectName}» → вкладка «WBS / План» → этап «${created.placeName}». В «Процессах» её не будет: это задача плана.`}
+                          : `Где искать: «Проекты» → «${created.projectName}» → вкладка «Структура работ / План» → этап «${created.placeName}». В «Процессах» её не будет: это задача плана.`}
                       </p>
                       <button
                         type="button"
@@ -1184,7 +1184,7 @@ export function AssistantPanel() {
                           type="button" onClick={() => void parse()} disabled={parsing}
                           className="flex items-center gap-1.5 text-[11px] font-bold text-violet-300 hover:text-violet-200 disabled:opacity-50"
                         >
-                          <RefreshCw size={11} className={parsing ? 'animate-spin' : ''} /> Повторить через Ollama
+                          <RefreshCw size={11} className={parsing ? 'animate-spin' : ''} /> Повторить с помощью Ollama
                         </button>
                       )}
                       {[...result.warnings, ...candidateWarnings, ...aiWarnings]
@@ -1239,8 +1239,8 @@ export function AssistantPanel() {
                             <p className={labelClass}>Куда добавить задачу</p>
                             <div className="grid grid-cols-2 gap-2">
                               {([
-                                ['process', 'В процесс', 'Доска процесса и «Мой кабинет» исполнителя, идёт срок (SLA)'],
-                                ['plan', 'В план проекта', 'Этап в «WBS / План» — для планирования сроков'],
+                                ['process', 'В процесс', 'Доска процесса и «Мой кабинет» исполнителя; срок отсчитывается с начала работы'],
+                                ['plan', 'В план проекта', 'Этап в «Структура работ / План» — для планирования сроков'],
                               ] as [Destination, string, string][]).map(([value, title, hint]) => (
                                 <button
                                   key={value} type="button" aria-pressed={form.destination === value}
@@ -1322,15 +1322,15 @@ export function AssistantPanel() {
                             onChange={e => setForm({ ...form, due_date: e.target.value || null })}
                           />
                           <p className="text-[11px] text-slate-500 mt-1.5">
-                            Календарный срок хранится отдельно от SLA. SLA задачи в процессе по умолчанию 24 часа.
+                            Календарный срок хранится отдельно от нормативного срока процесса. По умолчанию он составляет 24 часа.
                           </p>
                         </div>
                       </div>
                       {form.project_id && form.destination === 'plan' && projectBlocks.length === 0 && (
-                        <p className="text-xs text-amber-200/90">В проекте пока нет этапов — сначала создайте этап во вкладке «WBS / План».</p>
+                        <p className="text-xs text-amber-200/90">В проекте пока нет этапов — сначала создайте этап во вкладке «Структура работ / План».</p>
                       )}
                       {form.destination === 'plan' && chosenBlock?.has_process && (
-                        <p className="text-[11px] text-slate-500">У этапа есть шаблон процесса: задача сразу получит процесс и срок (SLA) по нему.</p>
+                        <p className="text-[11px] text-slate-500">У этапа есть шаблон процесса: задача сразу получит процесс и нормативный срок выполнения.</p>
                       )}
 
                       </div>
@@ -1348,13 +1348,13 @@ export function AssistantPanel() {
                           <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg border border-violet-500/30 bg-violet-500/10 text-xs font-bold text-violet-200">3</span>
                           <div className="min-w-0">
                             <h3 className="text-sm font-semibold text-slate-100">Рекомендуемые исполнители</h3>
-                            <p className="mt-0.5 text-[11px] text-slate-400">Top‑3 на основе навыков и доступных данных</p>
+                            <p className="mt-0.5 text-[11px] text-slate-400">Три лучших кандидата по навыкам и доступным данным</p>
                           </div>
                         </div>
                         <button
                           type="button" onClick={refreshAiCandidates} disabled={aiLoading}
                           className="flex min-h-9 flex-shrink-0 items-center gap-1.5 rounded-lg border border-slate-700 px-2.5 text-[11px] font-medium text-slate-300 hover:border-violet-500/50 hover:text-violet-200 disabled:opacity-50 transition-colors"
-                          title="Пересчитать Top-3 по текущим полям черновика"
+                          title="Пересчитать список кандидатов по текущим полям черновика"
                         >
                           <RefreshCw size={11} className={aiLoading ? 'animate-spin' : ''} /> Обновить
                         </button>
@@ -1387,8 +1387,8 @@ export function AssistantPanel() {
                         <div className="space-y-1.5">
                           <p className="text-[10px] text-slate-500">
                             {aiError
-                              ? 'Резервный список: Top-3 недоступен — обязательные навыки не проверены полностью:'
-                              : 'Предварительный список до завершения Top-3:'}
+                              ? 'Предварительный список: проверка обязательных навыков выполнена не полностью:'
+                              : 'Предварительный список до завершения подбора:'}
                           </p>
                           {candidates.map(c => (
                             <label
@@ -1420,8 +1420,8 @@ export function AssistantPanel() {
                         <div className="rounded-xl border border-slate-700/80 bg-slate-950/50 px-3.5 py-3">
                           <p className="text-xs font-medium text-slate-200">
                             {aiScoring?.competence_filter_applied
-                              ? `Top-3: ни один из ${aiScoring.total_considered ?? excludedTotal} сотрудников не прошёл обязательные навыки и проверку доступности.`
-                              : 'Top-3: подходящих сотрудников не найдено.'}
+                              ? `Ни один из ${aiScoring.total_considered ?? excludedTotal} сотрудников не прошёл проверку обязательных навыков и доступности.`
+                              : 'Подходящих сотрудников не найдено.'}
                           </p>
                           <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
                             Можно создать задачу без исполнителя или изменить требования и срок.
@@ -1443,7 +1443,7 @@ export function AssistantPanel() {
                       {!aiLoading && excludedTotal > 0 && (
                         <details className="rounded-lg border border-slate-800 bg-slate-900/40 px-2.5 py-2">
                           <summary className="text-[10px] font-semibold text-slate-400 cursor-pointer">
-                            Почему остальные не в Top-3 ({excludedTotal})
+                            Почему остальные кандидаты не прошли отбор ({excludedTotal})
                           </summary>
                           {excludedRows.length > 0 ? (
                             <ul className="mt-1.5 space-y-1">
@@ -1474,10 +1474,10 @@ export function AssistantPanel() {
                         <div role="alert" className="rounded-lg border border-red-500/25 bg-red-500/5 p-3">
                           <p className="flex items-center gap-2 text-xs font-bold text-red-200">
                             <AlertTriangle size={13} className="flex-shrink-0 text-red-400" />
-                            Выбранный сотрудник не входит в текущий Top-3
+                            Выбранный сотрудник не входит в текущий список кандидатов
                           </p>
                           <p className="mt-1 text-[11px] leading-relaxed text-slate-300">
-                            Выберите исполнителя из показанного Top-3, создайте задачу без исполнителя или измените требования и обновите подбор. Пока выбор не подтверждён, задача не будет создана.
+                            Выберите исполнителя из списка, создайте задачу без исполнителя или измените требования и обновите подбор. Пока выбор не подтверждён, задача не будет создана.
                           </p>
                         </div>
                       )}
@@ -1550,7 +1550,7 @@ export function AssistantPanel() {
                             type="button" onClick={() => void ask()} disabled={asking}
                             className="flex items-center gap-1.5 text-[11px] font-bold text-violet-300 hover:text-violet-200 disabled:opacity-50"
                           >
-                            <RefreshCw size={11} className={asking ? 'animate-spin' : ''} /> Повторить через Ollama
+                            <RefreshCw size={11} className={asking ? 'animate-spin' : ''} /> Повторить с помощью Ollama
                           </button>
                         )}
                       </div>

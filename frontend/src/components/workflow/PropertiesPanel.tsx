@@ -71,7 +71,7 @@ export function PropertiesPanel({ selectedNode, onUpdate, onClose }: PropertiesP
 
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className={labelClass} htmlFor="node-sla">Срок (SLA), ч</label>
+            <label className={labelClass} htmlFor="node-sla">Нормативный срок, ч</label>
             <input
               id="node-sla" type="number" min={1} max={8760} className={inputClass} value={data.slaHours}
               onChange={e => update({ slaHours: Number(e.target.value) })}

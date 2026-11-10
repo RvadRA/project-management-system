@@ -227,8 +227,8 @@ export default function CandidateCard({
         )}
         <span
           title={result.details?.availability?.current_workload_known === false
-            ? `Нет активных записей WorkloadEntry: текущая загрузка неизвестна. Известная оценка открытых задач: ${result.active_task_hours} ч${result.unestimated_task_count ? `; без оценки: ${result.unestimated_task_count}` : ''}`
-            : 'Текущая загрузка по WorkloadEntry'}
+            ? `Нет активных записей о загрузке: текущая занятость неизвестна. Известная оценка открытых задач: ${result.active_task_hours} ч${result.unestimated_task_count ? `; без оценки: ${result.unestimated_task_count}` : ''}`
+            : 'Текущая загрузка по записям о занятости'}
           className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
             result.details?.availability?.current_workload_known === false ? 'bg-slate-500/10 text-slate-400 border-slate-500/20' :
             result.current_workload > 100 ? 'bg-red-500/10 text-red-400 border-red-500/20' :
@@ -421,17 +421,17 @@ export default function CandidateCard({
                 {taskContext.deadlineStatus === 'overdue' && (
                   <p className="text-amber-300 mt-1">
                     Дедлайн {formatDateKey(taskContext.dueDate)} просрочен. Для расчёта и назначения используется
-                    SLA-период; проверьте срок задачи.
+                    нормативный период; проверьте срок задачи.
                   </p>
                 )}
                 {taskContext.deadlineStatus === 'today' && (
                   <p className="text-amber-300/90 mt-1">
-                    Дедлайн сегодня. Для расчёта и назначения используется SLA-период.
+                    Срок истекает сегодня. Для расчёта и назначения используется нормативный период.
                   </p>
                 )}
                 {taskContext.deadlineStatus === 'missing' && (
                   <p className="text-amber-300/90 mt-1">
-                    Дедлайн не задан. Для расчёта и назначения применён SLA-fallback.
+                    Срок не задан. Для расчёта и назначения использован нормативный срок.
                   </p>
                 )}
               </div>

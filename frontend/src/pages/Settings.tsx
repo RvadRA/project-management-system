@@ -7,6 +7,7 @@ import { useAppContext } from '../context/AppContext';
 import { toast } from 'react-hot-toast';
 import { niceConfirm } from '../utils/confirm';
 import { ALL_ROLES, ROLE_LABELS } from '../utils/roles';
+import { complexityLabel, riskProbabilityLabel, skillCategoryLabel } from '../utils/localization';
 
 type TabType = 'skills' | 'risks' | 'roles' | 'domains' | 'calendars' | 'blocks' | 'audit' | 'users' | 'system';
 
@@ -175,7 +176,7 @@ export default function Settings() {
               <div key={skill.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-5 hover:border-slate-700 transition-all group relative overflow-hidden">
                 <div className="absolute top-0 left-0 w-1 h-full bg-violet-500 opacity-0 group-hover:opacity-100 transition-opacity" />
                 <div className="flex justify-between items-start mb-3">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-violet-400 bg-violet-400/10 px-2 py-0.5 rounded">{skill.category}</span>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-violet-400 bg-violet-400/10 px-2 py-0.5 rounded">{skillCategoryLabel(skill.category)}</span>
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button onClick={() => openEdit(skill)} className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"><Edit2 size={14}/></button>
                     <button onClick={() => handleDelete(skill.id)} className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded-lg transition-colors"><Trash2 size={14}/></button>
@@ -190,7 +191,7 @@ export default function Settings() {
                 <div className="flex justify-between items-start mb-4">
                   <div className="flex items-center gap-2">
                     <span className={`w-2 h-2 rounded-full ${risk.probability === 'HIGH' ? 'bg-red-500' : risk.probability === 'MEDIUM' ? 'bg-amber-500' : 'bg-emerald-500'}`} />
-                    <span className="text-xs text-slate-400 font-medium">Risk: {risk.probability}</span>
+                    <span className="text-xs text-slate-400 font-medium">Вероятность: {riskProbabilityLabel(risk.probability)}</span>
                   </div>
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button onClick={() => openEdit(risk)} className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"><Edit2 size={14}/></button>
@@ -243,7 +244,7 @@ export default function Settings() {
                 <div className="flex justify-between items-start mb-4">
                   <div className="flex items-center gap-2">
                     <Calendar size={20} className="text-blue-400" />
-                    {cal.is_default && <span className="text-[10px] bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded border border-blue-500/20 font-bold uppercase">Default</span>}
+                    {cal.is_default && <span className="text-[10px] bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded border border-blue-500/20 font-bold uppercase">По умолчанию</span>}
                   </div>
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button onClick={() => openEdit(cal)} className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"><Edit2 size={14}/></button>
@@ -326,7 +327,7 @@ export default function Settings() {
                   </div>
                 </div>
                 <h3 className="text-white font-bold mb-1 group-hover:text-violet-400 transition-colors">{b.name}</h3>
-                <p className="text-xs text-slate-500 mb-6 line-clamp-2">Сложность: {b.complexity} · {b.stats?.span_days ?? b.avg_duration ?? '—'} дн. · задач: {b.stats?.task_count ?? 0}</p>
+                <p className="text-xs text-slate-500 mb-6 line-clamp-2">Сложность: {complexityLabel(b.complexity)} · {b.stats?.span_days ?? b.avg_duration ?? '—'} дн. · задач: {b.stats?.task_count ?? 0}</p>
                 <div className="flex items-center justify-between pt-4 border-t border-slate-800">
                    <div className="flex items-center gap-2">
                       <Clock size={14} className="text-slate-600" />
@@ -351,7 +352,7 @@ export default function Settings() {
               <div key={setting.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-6 hover:border-slate-700 transition-all group relative overflow-hidden">
                 <div className="absolute top-0 left-0 w-1 h-full bg-amber-500 opacity-0 group-hover:opacity-100 transition-opacity" />
                 <div className="flex justify-between items-start mb-4">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded">System Config</span>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded">Настройки системы</span>
                   <button onClick={() => openEdit(setting)} className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors opacity-0 group-hover:opacity-100"><Edit2 size={14}/></button>
                 </div>
                 <h3 className="text-white font-bold mb-1 font-mono text-sm">{setting.key}</h3>
@@ -462,12 +463,15 @@ export default function Settings() {
                     onChange={e => setFormData({...formData, category: e.target.value})}
                     className="w-full bg-slate-800 border border-slate-700 text-slate-200 text-sm rounded-xl px-4 py-2.5 focus:outline-none focus:border-violet-500 transition-all"
                   >
-                    <option value="Frontend">Frontend</option>
-                    <option value="Backend">Backend</option>
-                    <option value="DevOps">DevOps</option>
-                    <option value="Design">Design</option>
-                    <option value="Analytics">Analytics</option>
-                    <option value="Management">Management</option>
+                    <option value="Frontend">Разработка интерфейсов</option>
+                    <option value="Backend">Разработка серверной части</option>
+                    <option value="DevOps">Разработка и эксплуатация (DevOps)</option>
+                    <option value="Design">Дизайн</option>
+                    <option value="Analytics">Аналитика</option>
+                    <option value="Management">Управление</option>
+                    <option value="Database">Базы данных</option>
+                    <option value="Data">Данные</option>
+                    <option value="Tools">Инструменты</option>
                   </select>
                 </div>
               )}
@@ -482,9 +486,9 @@ export default function Settings() {
                         onChange={e => setFormData({...formData, probability: e.target.value})}
                         className="w-full bg-slate-800 border border-slate-700 text-slate-200 text-sm rounded-xl px-4 py-2.5 focus:outline-none focus:border-violet-500"
                       >
-                        <option value="LOW">Low</option>
-                        <option value="MEDIUM">Medium</option>
-                        <option value="HIGH">High</option>
+                        <option value="LOW">Низкая</option>
+                        <option value="MEDIUM">Средняя</option>
+                        <option value="HIGH">Высокая</option>
                       </select>
                     </div>
                     <div>
@@ -494,9 +498,9 @@ export default function Settings() {
                         onChange={e => setFormData({...formData, impact: e.target.value})}
                         className="w-full bg-slate-800 border border-slate-700 text-slate-200 text-sm rounded-xl px-4 py-2.5 focus:outline-none focus:border-violet-500"
                       >
-                        <option value="LOW">Low</option>
-                        <option value="MEDIUM">Medium</option>
-                        <option value="HIGH">High</option>
+                        <option value="LOW">Низкое</option>
+                        <option value="MEDIUM">Среднее</option>
+                        <option value="HIGH">Высокое</option>
                       </select>
                     </div>
                   </div>
@@ -568,7 +572,7 @@ export default function Settings() {
                     </div>
                   </div>
                   <div>
-                    <label className="block text-xs text-slate-400 mb-1.5">Username</label>
+                    <label className="block text-xs text-slate-400 mb-1.5">Имя пользователя</label>
                     <input 
                       type="text" required
                       value={formData.username || ''}
@@ -577,7 +581,7 @@ export default function Settings() {
                     />
                   </div>
                   <div>
-                    <label className="block text-xs text-slate-400 mb-1.5">Email</label>
+                    <label className="block text-xs text-slate-400 mb-1.5">Электронная почта</label>
                     <input 
                       type="email" required
                       value={formData.email || ''}
@@ -597,7 +601,7 @@ export default function Settings() {
                     </div>
                   )}
                   <div>
-                    <label className="block text-xs text-slate-400 mb-1.5">Telegram Chat ID (для пуш-уведомлений)</label>
+                    <label className="block text-xs text-slate-400 mb-1.5">ID чата Telegram (для мгновенных уведомлений)</label>
                     <input 
                       type="text"
                       placeholder="Напр. 123456789"

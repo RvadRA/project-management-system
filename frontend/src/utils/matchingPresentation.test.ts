@@ -73,7 +73,7 @@ describe('matching presentation', () => {
       active_task_hours: 12,
       details: unknownAvailability,
     })).toBe('12 ч задач / загрузка н/д');
-    expect(explainScore(unknownAvailability).availability).toContain('WorkloadEntry');
+    expect(explainScore(unknownAvailability).availability).toContain('Подтверждённых записей о загрузке');
   });
 
   it('suggests a conservative load when availability is unknown', () => {

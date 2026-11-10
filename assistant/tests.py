@@ -209,7 +209,10 @@ class StatusTests(AITestCase):
 
     def test_employee_sees_only_availability(self):
         self.login(self.emp1)
-        with mock.patch.object(OllamaProvider, 'probe', return_value=HEALTHY):
+        with (
+            mock.patch.object(OllamaProvider, 'probe', return_value=HEALTHY),
+            mock.patch.object(FasterWhisperProvider, 'can_transcribe', return_value=False),
+        ):
             data = self.client.get('/api/ai/status/').data
         self.assertNotIn('providers', data)
         self.assertTrue(data['chat_available'])
@@ -317,7 +320,8 @@ class TaskDraftTests(AITestCase):
         self.assertNotIn('hourly', sent)
         self.assertNotIn('emp1', sent)
         self.assertNotIn('- B:', sent)
-        self.assertIn('- A:', sent)
+        self.assertIn('Проекты: A', sent)
+        self.assertNotIn('Проекты: A, B', sent)
         self.assertEqual(Task.objects.filter(name='Подготовить отчёт').count(), 0)   # ничего не создано
         # предлагаются только процессы доступного проекта
         self.assertEqual([p['id'] for p in res.data['processes']], [self.workflow_a.id])
@@ -387,7 +391,7 @@ class TaskDraftTests(AITestCase):
         with ollama('chat', {'*': '{"title": "T", "project": "A", "target": "process", "process": "Процесс A"}'}) as calls:
             draft = self.draft('добавь в процесс Процесс A задачу проверить форму в проекте A').data['draft']
         self.assertEqual((draft['destination'], draft['process_id']), ('process', self.workflow_a.id))
-        self.assertIn('процессы: Процесс A', calls.sent())
+        self.assertIn('Процессы: Процесс A', calls.sent())
         with ollama('chat', {'*': '{"title": "T", "project": "A", "target": "plan", "block": "Этап 1"}'}):
             draft = self.draft('добавь в план в этап один задачу проекта A').data['draft']
         self.assertEqual((draft['destination'], draft['block_id'], draft['process_id']), ('plan', self.block_a.id, None))

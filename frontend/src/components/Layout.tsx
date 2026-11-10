@@ -24,7 +24,7 @@ const ALL_NAV_ITEMS = [
   { to: '/analytics', icon: BarChart3,       label: 'Аналитика',      roles: STAFF_ROLES },
   { to: '/calendar',  icon: CalendarDays,    label: 'Календарь',      roles: STAFF_ROLES },
 
-  { to: '/catalog',   icon: Package,         label: 'Библиотека WBS', roles: STAFF_ROLES },
+  { to: '/catalog',   icon: Package,         label: 'Библиотека планов работ', roles: STAFF_ROLES },
   { to: '/audit',     icon: History,         label: 'Журнал аудита',  roles: STAFF_ROLES },
   { to: '/settings',  icon: Settings,        label: 'Настройки',      roles: ['ADMIN'] },
   { to: '/knowledge-base', icon: BookOpen,   label: 'База знаний',    roles: ALL_ROLES },

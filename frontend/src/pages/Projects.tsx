@@ -17,6 +17,7 @@ import {
   isStaff, projectPerms, MEMBER_PERMISSIONS, MEMBER_ROLE_MANAGER,
   isMemberManager, memberPositionLabel, memberRoleValue, resolveMemberRole,
 } from '../utils/roles';
+import { complexityLabel, riskImpactLabel, riskLevelLabel, riskProbabilityLabel } from '../utils/localization';
 
 // Status labels in Russian
 const statusMap: Record<string, string> = {
@@ -118,10 +119,10 @@ const WBSTaskItem = ({
               ) : (
                 <p className="text-sm font-medium text-slate-200 flex items-center gap-2">
                   {task.name}
-                  <span className="text-[10px] bg-slate-800 text-slate-500 px-1.5 py-0.5 rounded border border-slate-700/50 uppercase tracking-tighter">PLAN</span>
+                  <span className="text-[10px] bg-slate-800 text-slate-500 px-1.5 py-0.5 rounded border border-slate-700/50 uppercase tracking-tighter">ПЛАН</span>
                   {task.assigned_to_name && (
                     <span className="text-[10px] text-slate-500 font-normal">
-                      — {task.assigned_to_name} (Planned)
+                      — {task.assigned_to_name} (запланировано)
                     </span>
                   )}
                 </p>
@@ -129,13 +130,13 @@ const WBSTaskItem = ({
 
               {task.is_critical && (
                 <span className="text-[9px] bg-red-500/10 text-red-400 px-1.5 py-0.5 rounded border border-red-500/20 font-bold tracking-tight">
-                  CRITICAL
+                  КРИТИЧЕСКАЯ
                 </span>
               )}
 
               {task.process_template_info && (
                 <span className="text-[9px] bg-emerald-500/10 text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-500/20 font-bold">
-                  AUTO WF
+                  АВТОПРОЦЕСС
                 </span>
               )}
 
@@ -148,7 +149,7 @@ const WBSTaskItem = ({
                       ? 'bg-blue-500/10 text-blue-400'
                       : 'bg-slate-800 text-slate-500'
                   }`}>
-                    EXECUTION: {task.workflow_status}
+                    ВЫПОЛНЕНИЕ: {task.workflow_status === 'DONE' ? 'Завершено' : task.workflow_status === 'IN_PROGRESS' ? 'В работе' : 'К выполнению'}
                   </span>
                   <ArrowUpRight size={10} className="text-slate-600" />
                 </div>
@@ -156,7 +157,7 @@ const WBSTaskItem = ({
 
               {task.assignee_workload > 100 && (
                 <span className="text-[9px] bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded border border-red-500/30 font-bold animate-pulse">
-                  OVERLOAD
+                  ПЕРЕГРУЗКА
                 </span>
               )}
             </div>
@@ -170,7 +171,7 @@ const WBSTaskItem = ({
                 task.risk_level === 'MEDIUM' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
                 'bg-slate-800 text-slate-500 border-slate-700'
               }`}>
-                {task.risk_level}
+                {riskLevelLabel(task.risk_level)}
               </span>
               {task.required_roles?.length > 0 && (
                 <div className="flex items-center gap-1.5 border-l border-slate-800 pl-3">
@@ -279,7 +280,7 @@ const WBSTaskItem = ({
                   }}
                   className="p-1.5 text-violet-400 hover:text-white text-[10px]" title="Что если? (+1д)"
                 >
-                  What-if?
+                  Что если?
                 </button>
                 <div className="w-px h-4 bg-slate-800 mx-1" />
                 <button 
@@ -302,7 +303,7 @@ const WBSTaskItem = ({
         {preview && preview.taskId === task.id && (
           <div className="bg-slate-900 border border-violet-500/30 p-3 mt-2 rounded-lg flex justify-between items-center animate-in fade-in slide-in-from-top-1 ml-10">
             <div>
-              <p className="text-[10px] text-violet-400 font-bold uppercase tracking-widest mb-1">Simulation Preview</p>
+              <p className="text-[10px] text-violet-400 font-bold uppercase tracking-widest mb-1">Предварительный результат симуляции</p>
               <p className="text-xs text-slate-300">
                 Новое завершение: <span className="text-white font-bold">{preview.new_end_date}</span>
               </p>
@@ -1044,7 +1045,7 @@ function ProjectDetailPanel({
             >
               {tab === 'details' && <><Plus size={14}/> Детали</>}
               {tab === 'team' && <><Users size={14}/> Команда</>}
-              {tab === 'gantt' && <><ListTree size={14}/> WBS / План</>}
+              {tab === 'gantt' && <><ListTree size={14}/> Структура работ / План</>}
               {tab === 'files' && <><Paperclip size={14}/> Файлы</>}
               {tab === 'history' && <><History size={14}/> Логи</>}
             </button>
@@ -1101,7 +1102,7 @@ function ProjectDetailPanel({
 
             {project.manager && (
               <div className="pt-2">
-                <p className="text-xs text-slate-500 uppercase tracking-wider mb-2">Project Manager</p>
+                <p className="text-xs text-slate-500 uppercase tracking-wider mb-2">Менеджер проекта</p>
                 <div className="flex items-center gap-2">
                   <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-500 flex items-center justify-center text-xs font-bold text-white shadow-lg shadow-violet-500/20">
                     {project.manager.full_name.substring(0, 1)}
@@ -1134,7 +1135,7 @@ function ProjectDetailPanel({
                         />
                         <div className="flex flex-col">
                            <span className="text-xs text-slate-300 group-hover:text-slate-100 transition-colors">{r.name}</span>
-                           <span className="text-[8px] text-slate-500 uppercase">Prob: {r.probability} · Impact: {r.impact}</span>
+                           <span className="text-[8px] text-slate-500 uppercase">Вероятность: {riskProbabilityLabel(r.probability)} · Влияние: {riskImpactLabel(r.impact)}</span>
                         </div>
                       </label>
                     ))}
@@ -1146,7 +1147,7 @@ function ProjectDetailPanel({
                         <AlertTriangle size={12} className="text-red-400" />
                         <div className="flex flex-col">
                           <span className="text-[10px] font-semibold text-red-200 leading-none">{r.name}</span>
-                          <span className="text-[8px] text-red-400/60 uppercase mt-0.5">Вероятность: {r.probability} · Влияние: {r.impact}</span>
+                          <span className="text-[8px] text-red-400/60 uppercase mt-0.5">Вероятность: {riskProbabilityLabel(r.probability)} · Влияние: {riskImpactLabel(r.impact)}</span>
                         </div>
                       </div>
                     ))}
@@ -1320,7 +1321,7 @@ function ProjectDetailPanel({
                           {(!selectedLoadKnown || selectedLoadHigh) && <AlertTriangle size={10} />}
                           Текущая загрузка сотрудника: {selectedLoadKnown
                             ? `${selectedEmployee?.current_workload_percentage ?? 0}%`
-                            : 'н/д — нет записей WorkloadEntry'}
+                            : 'н/д — нет записей о загрузке'}
                         </p>
                       )}
                     </div>
@@ -1373,7 +1374,7 @@ function ProjectDetailPanel({
                       : 'text-slate-400 hover:text-slate-200'
                   }`}
                 >
-                  <ListTree size={13} /> WBS Дерево
+                  <ListTree size={13} /> Дерево работ
                 </button>
                 <button
                   onClick={() => setWbsView('gantt')}
@@ -1455,7 +1456,7 @@ function ProjectDetailPanel({
             <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl w-80 shadow-2xl shadow-black/50">
               <div className="flex justify-between items-start mb-4">
                 <div>
-                  <p className="text-[10px] text-amber-400 font-bold uppercase tracking-widest mb-1">AI Recommendation</p>
+                  <p className="text-[10px] text-amber-400 font-bold uppercase tracking-widest mb-1">Рекомендация ИИ</p>
                   <h4 className="text-sm font-bold text-white">{aiSuggestion.full_name}</h4>
                 </div>
                 <button onClick={() => setAiSuggestion(null)} className="text-slate-500 hover:text-white"><X size={16}/></button>
@@ -1474,8 +1475,8 @@ function ProjectDetailPanel({
                 {aiSuggestion.breakdown && (
                   <div className="bg-slate-800/50 p-3 rounded-xl border border-slate-800 space-y-2">
                     <div className="flex justify-between items-center text-[9px] uppercase tracking-wider text-slate-500 font-bold mb-1">
-                      <span>Score Components</span>
-                      <span className="text-violet-400">{aiSuggestion.score} pts</span>
+                      <span>Состав оценки</span>
+                      <span className="text-violet-400">{aiSuggestion.score} балл.</span>
                     </div>
                     {Object.entries(aiSuggestion.breakdown).map(([key, val]: any) => (
                       <div key={key} className="space-y-1">
@@ -2363,7 +2364,7 @@ export default function Projects() {
                                   )}
                                 </div>
                                 <div className="flex items-center gap-2 mt-0.5">
-                                  <p className="text-[10px] text-slate-500">{block.domain} • {block.complexity}</p>
+                                  <p className="text-[10px] text-slate-500">{block.domain} • {complexityLabel(block.complexity)}</p>
                                   {block.analytics && block.analytics.usage_count > 0 && (
                                     <p className="text-[10px] text-slate-400 border-l border-slate-700 pl-2">
                                       {block.analytics.avg_actual_duration != null ? `${block.analytics.avg_actual_duration} дн. · ` : ''}использован {block.analytics.usage_count} раз

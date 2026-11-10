@@ -43,6 +43,13 @@ export type Forecast =
   | { kind: 'no-data' }
   | { kind: 'estimate'; end: Date; delayDays: number; reliable: boolean };
 
+export interface ProjectHealthAlert {
+  project: Project;
+  health: Health;
+  expected: number | null;
+  forecast: Forecast;
+}
+
 /**
  * Прогноз завершения: если за прошедшие дни выполнено p% работы, вся работа займёт
  * elapsed / p дней от старта. (Раньше вместо прошедших дней подставлялась плановая длительность,
@@ -65,4 +72,27 @@ export const forecastProject = (project: Project): Forecast => {
     // При малом прогрессе или коротком сроке экстраполяция даёт нереальные даты
     reliable: project.progress_percentage >= 10 && elapsed >= 7,
   };
+};
+
+export const projectHealthAlerts = (projects: Project[]): ProjectHealthAlert[] => {
+  const priority: Record<Health, number> = { overdue: 0, risk: 1, behind: 2, ok: 3 };
+
+  return projects
+    .filter(project => project.status === 'ACTIVE' || project.status === 'AT_RISK')
+    .map(project => ({
+      project,
+      health: projectHealth(project),
+      expected: expectedProgress(project),
+      forecast: forecastProject(project),
+    }))
+    .filter(({ health, forecast }) =>
+      health !== 'ok' || (forecast.kind === 'estimate' && forecast.delayDays > 0),
+    )
+    .sort((a, b) => {
+      const byHealth = priority[a.health] - priority[b.health];
+      if (byHealth !== 0) return byHealth;
+      const aDelay = a.forecast.kind === 'estimate' ? a.forecast.delayDays : 0;
+      const bDelay = b.forecast.kind === 'estimate' ? b.forecast.delayDays : 0;
+      return bDelay - aDelay;
+    });
 };

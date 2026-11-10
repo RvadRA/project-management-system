@@ -42,6 +42,7 @@ export function CommandPalette() {
       action: () => { navigate('/workflows'); setIsOpen(false); },
     })),
   ];
+  const typeLabels = { project: 'Проект', employee: 'Сотрудник', process: 'Процесс' };
 
   if (!isOpen) return null;
 
@@ -61,7 +62,7 @@ export function CommandPalette() {
             placeholder="Поиск проектов, сотрудников, процессов..."
             className="flex-1 bg-transparent text-white text-sm outline-none placeholder:text-slate-600"
           />
-          <kbd className="text-[10px] font-bold text-slate-600 bg-slate-800 px-2 py-0.5 rounded">ESC</kbd>
+          <kbd className="text-[10px] font-bold text-slate-600 bg-slate-800 px-2 py-0.5 rounded">Эск</kbd>
         </div>
         
         <div className="max-h-80 overflow-y-auto custom-scrollbar">
@@ -76,7 +77,7 @@ export function CommandPalette() {
                 item.type === 'employee' ? 'bg-emerald-500/10 text-emerald-400' :
                 'bg-blue-500/10 text-blue-400'
               }`}>
-                {item.type.toUpperCase()}
+                {typeLabels[item.type]}
               </span>
               <span className="text-sm text-slate-200">{item.name}</span>
             </button>

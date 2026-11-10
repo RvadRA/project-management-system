@@ -184,6 +184,10 @@ class TranscriptCorrectionTests(unittest.TestCase):
             services._task_draft_response('{"title":"Черновик","description":""}'),
             ({'title': 'Черновик', 'description': ''}, ''),
         )
+        self.assertEqual(
+            services._task_draft_response('{"title":"Черновик"}'),
+            ({'title': 'Черновик', 'description': ''}, ''),
+        )
 
     def test_task_draft_keeps_provider_visible_when_its_response_is_rejected(self):
         result = {'provider': None, 'attempts': []}

@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { TrendingUp, CheckCircle2, AlertTriangle, ArrowUpRight, Clock, Bell } from 'lucide-react';
 import { useAppContext } from '../context/AppContext';
 import { useNavigate } from 'react-router-dom';
+import { HEALTH_META, projectHealthAlerts } from '../utils/projectHealth';
 
 const statusMap: Record<string, string> = {
   ACTIVE: 'Активен',
@@ -42,6 +43,7 @@ export default function Dashboard() {
   const totalTasks = allTasks.length;
   const donePercent = useMemo(() => totalTasks > 0 ? Math.round((doneTasksCount / totalTasks) * 100) : 0, [totalTasks, doneTasksCount]);
   const unreadNotifications = useMemo(() => notifications.filter(n => !n.is_read).length, [notifications]);
+  const healthAlerts = useMemo(() => projectHealthAlerts(projects), [projects]);
 
   const stats = useMemo(() => [
     {
@@ -84,7 +86,7 @@ export default function Dashboard() {
       bg: 'bg-indigo-500/10',
       text: 'text-indigo-400',
     },
-  ], [activeProjectsCount, projects.length, employees.length, skills.length, donePercent, doneTasksCount, totalTasks, overdueTasksCount, escalatedCount]);
+  ], [activeProjectsCount, atRiskCount, projects.length, employees.length, skills.length, donePercent, doneTasksCount, totalTasks, overdueTasksCount, escalatedCount]);
 
   if (loading) {
     return (
@@ -127,6 +129,76 @@ export default function Dashboard() {
           </div>
         ))}
       </div>
+
+      <section className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+        <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between gap-4">
+          <div>
+            <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+              <AlertTriangle size={15} className="text-amber-400" />
+              Сигналы по проектам
+              {healthAlerts.length > 0 && (
+                <span className="text-[10px] font-bold bg-amber-500/10 text-amber-300 rounded-full px-2 py-0.5">
+                  {healthAlerts.length}
+                </span>
+              )}
+            </h2>
+            <p className="text-xs text-slate-500 mt-1">Сроки, отставание от плана и прогноз завершения</p>
+          </div>
+          <button
+            onClick={() => navigate('/projects')}
+            className="text-xs text-violet-400 hover:text-violet-300 flex items-center gap-1 transition-colors shrink-0"
+          >
+            Все проекты <ArrowUpRight size={12} />
+          </button>
+        </div>
+        {healthAlerts.length === 0 ? (
+          <p className="px-6 py-6 text-sm text-slate-500">Нет активных проектов, требующих внимания.</p>
+        ) : (
+          <div className="divide-y divide-slate-800" role="list" aria-label="Проекты с сигналами">
+            {healthAlerts.slice(0, 5).map(({ project, health, expected, forecast }) => {
+              const label = health === 'ok' ? 'Прогноз задержки' : HEALTH_META[health].label;
+              const badge = health === 'ok'
+                ? 'bg-orange-500/10 text-orange-300 border-orange-500/20'
+                : HEALTH_META[health].badge;
+              const detail = health === 'overdue'
+                ? `Срок ${project.end_date} прошёл; готовность ${project.progress_percentage}%.`
+                : health === 'risk'
+                  ? 'Проект отмечен как находящийся в зоне риска.'
+                  : health === 'behind' && expected !== null
+                    ? `Выполнено ${project.progress_percentage}%; по календарю ожидалось ${expected}%.`
+                    : 'По текущему темпу срок проекта может сдвинуться.';
+              const forecastText = forecast.kind === 'estimate' && forecast.delayDays > 0
+                ? `${forecast.reliable ? '' : 'Предварительно: '}завершение ${forecast.end.toLocaleDateString('ru-RU')}, на ${forecast.delayDays} дн. позже плана.`
+                : null;
+
+              return (
+                <div key={project.id} role="listitem" className="px-6 py-4 flex items-center justify-between gap-4 hover:bg-slate-800/20">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-medium text-slate-100">{project.name}</span>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full border ${badge}`}>{label}</span>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-1">{detail}</p>
+                    {forecastText && <p className="text-xs text-slate-500 mt-1">{forecastText}</p>}
+                  </div>
+                  <button
+                    onClick={() => navigate('/projects')}
+                    aria-label={`Открыть проекты: ${project.name}`}
+                    className="text-xs text-violet-400 hover:text-violet-300 flex items-center gap-1 shrink-0"
+                  >
+                    Открыть <ArrowUpRight size={12} />
+                  </button>
+                </div>
+              );
+            })}
+            {healthAlerts.length > 5 && (
+              <p className="px-6 py-3 text-xs text-slate-500">
+                Ещё {healthAlerts.length - 5} проектов требуют внимания. Откройте список проектов для подробностей.
+              </p>
+            )}
+          </div>
+        )}
+      </section>
 
       <div className="grid grid-cols-3 gap-6">
         {/* Projects Table */}

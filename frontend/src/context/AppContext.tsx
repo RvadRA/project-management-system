@@ -90,7 +90,7 @@ export interface Employee {
   hourly_rate: string;
   bio: string;
   current_workload_percentage: number;
-  /** Оценка трудозатрат открытых задач, ч (SLA — срок, а не работа) */
+  /** Оценка трудозатрат открытых задач, ч (нормативный срок — не трудозатраты) */
   active_task_hours: number;
   open_task_count: number;
   unestimated_task_count: number;
@@ -167,7 +167,7 @@ export interface KanbanTask {
   assigned_to: number | null;
   assigned_to_name: string | null;
   due_date: string | null;
-  /** Когда задача перешла в работу — с этого момента идёт SLA */
+  /** Когда задача перешла в работу — с этого момента отсчитывается нормативный срок */
   started_at?: string | null;
   completed_at?: string | null;
   sla_hours: number;

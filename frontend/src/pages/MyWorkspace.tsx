@@ -426,7 +426,7 @@ export default function MyWorkspace() {
           {/* SLA overview */}
           {activeTasks.some(t => slaRatio(t) !== null) && (
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-              <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Соблюдение SLA</h3>
+              <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Соблюдение сроков</h3>
               <div className="space-y-3">
                 {activeTasks.filter(t => slaRatio(t) !== null).slice(0, 5).map(t => {
                   const ratio = slaRatio(t) ?? 0;

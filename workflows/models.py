@@ -12,7 +12,7 @@ class WorkflowTemplate(models.Model):
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    ui_config = models.JSONField(default=dict, blank=True, help_text="Данные для UI (позиции узлов и т.д.)")
+    ui_config = models.JSONField(default=dict, blank=True, help_text="Данные интерфейса (например, позиции узлов)")
 
     class Meta:
         ordering = ['-version']
@@ -40,11 +40,11 @@ class WorkflowTaskTemplate(models.Model):
     assigned_role = models.CharField(max_length=50, blank=True, null=True, help_text="Роль для назначения (например, MANAGER)")
     weight = models.PositiveIntegerField(default=1, help_text="Вес задачи для расчета прогресса")
     priority = models.CharField(max_length=20, default='MEDIUM', choices=[
-        ('LOW', 'Low'), ('MEDIUM', 'Medium'), ('HIGH', 'High'), ('URGENT', 'Urgent')
+        ('LOW', 'Низкий'), ('MEDIUM', 'Средний'), ('HIGH', 'Высокий'), ('URGENT', 'Срочный')
     ])
     estimated_hours = models.FloatField(default=0.0)
     risk_level = models.CharField(max_length=20, default='LOW', choices=[
-        ('LOW', 'Low'), ('MEDIUM', 'Medium'), ('HIGH', 'High')
+        ('LOW', 'Низкий'), ('MEDIUM', 'Средний'), ('HIGH', 'Высокий')
     ])
     # Условие перехода (простое JSON-условие)
     transition_condition = models.JSONField(default=dict, blank=True)
@@ -52,8 +52,8 @@ class WorkflowTaskTemplate(models.Model):
     auto_approve = models.BooleanField(default=False)
     
     # Integration settings
-    integration_url = models.URLField(blank=True, null=True, help_text="URL для вызова вебхука (для INTEGRATION задач)")
-    integration_config = models.JSONField(default=dict, blank=True, help_text="Конфигурация payload/headers для вебхука")
+    integration_url = models.URLField(blank=True, null=True, help_text="Адрес для вызова вебхука (для интеграционных задач)")
+    integration_config = models.JSONField(default=dict, blank=True, help_text="Настройки вебхука: полезная нагрузка и заголовки")
     checklist = models.JSONField(default=list, blank=True, help_text="Список пунктов (строки)")
 
     class Meta:
@@ -104,11 +104,11 @@ class WorkflowTask(models.Model):
     order = models.PositiveIntegerField(default=0)
     weight = models.PositiveIntegerField(default=1, help_text="Вес задачи для расчета прогресса")
     priority = models.CharField(max_length=20, default='MEDIUM', choices=[
-        ('LOW', 'Low'), ('MEDIUM', 'Medium'), ('HIGH', 'High'), ('URGENT', 'Urgent')
+        ('LOW', 'Низкий'), ('MEDIUM', 'Средний'), ('HIGH', 'Высокий'), ('URGENT', 'Срочный')
     ])
     estimated_hours = models.FloatField(default=0.0)
     risk_level = models.CharField(max_length=20, default='LOW', choices=[
-        ('LOW', 'Low'), ('MEDIUM', 'Medium'), ('HIGH', 'High')
+        ('LOW', 'Низкий'), ('MEDIUM', 'Средний'), ('HIGH', 'Высокий')
     ])
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
@@ -140,7 +140,7 @@ class WorkflowTask(models.Model):
     # Process Logic
     transition_condition = models.JSONField(
         default=dict, blank=True, 
-        help_text="e.g. {'type': 'approval_required', 'role': 'MANAGER'}"
+        help_text="Например: {'type': 'approval_required', 'role': 'MANAGER'}"
     )
 
     class Meta:

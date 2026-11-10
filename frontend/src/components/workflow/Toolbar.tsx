@@ -73,7 +73,7 @@ export function Toolbar({
       <button onClick={onFitView} className={iconButton} title="Показать всё" aria-label="Показать всё"><Maximize2 size={16} /></button>
 
       <p className="hidden xl:block text-[11px] text-slate-500 ml-2">
-        Связь: потяните от нижней точки одной задачи к верхней точке другой. Удалить задачу или связь — выделите и нажмите Delete.
+        Связь: потяните от нижней точки одной задачи к верхней точке другой. Чтобы удалить задачу или связь, выделите её и нажмите клавишу Delete.
       </p>
 
       <div className="flex-1" />

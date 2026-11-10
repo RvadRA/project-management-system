@@ -381,12 +381,11 @@ def _task_draft_response(answer):
             parsed = json.loads(answer)
         except (TypeError, ValueError):
             return None, 'invalid_json'
-    if (
-        not isinstance(parsed, dict)
-        or not isinstance(parsed.get('title'), str)
-        or not isinstance(parsed.get('description'), str)
-    ):
+    if not isinstance(parsed, dict) or not isinstance(parsed.get('title'), str):
         return None, 'invalid_json_shape'
+    if 'description' in parsed and not isinstance(parsed['description'], str):
+        return None, 'invalid_json_shape'
+    parsed.setdefault('description', '')
     return parsed, ''
 
 
@@ -714,7 +713,7 @@ def build_task_draft(user, text, project_id=None):
                     f'{attempt["provider"]}: {attempt["reason"]}' for attempt in result['attempts']
                 )
                 result['warnings'].append(
-                    f'Черновик составлен по простым правилам после ошибки ({cause}). '
+                    f'Черновик составлен по простым правилам после ошибки модели Ollama ({cause}). '
                     'Проверьте поля вручную и повторите попытку.'
                 )
             else:

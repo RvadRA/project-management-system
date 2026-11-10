@@ -116,7 +116,7 @@ export default function PlanningCatalog() {
             <Package className="text-violet-500" size={32} />
             Каталог пакетов планирования
           </h1>
-          <p className="text-slate-400 mt-2">Библиотека готовых этапов и WBS-шаблонов для быстрого старта проектов</p>
+          <p className="text-slate-400 mt-2">Библиотека готовых этапов и шаблонов планов работ для быстрого старта проектов</p>
         </div>
         <div className="bg-violet-500/10 border border-violet-500/20 rounded-xl px-4 py-2 text-center">
           <p className="text-[10px] uppercase font-bold text-violet-400 tracking-wider">Всего шаблонов</p>

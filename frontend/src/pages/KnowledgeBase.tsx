@@ -485,7 +485,7 @@ export default function KnowledgeBase() {
                     ) : (
                       <>
                         <p className="text-xs text-slate-400 group-hover:text-slate-350 transition-colors font-medium">Кликните или перетащите файл сюда</p>
-                        <p className="text-[10px] text-slate-600">PDF, DOCX, PNG, JPG, XLS и др. до 10MB</p>
+                        <p className="text-[10px] text-slate-600">PDF, DOCX, PNG, JPG, XLS и другие форматы, до 10 МБ</p>
                       </>
                     )}
                   </div>

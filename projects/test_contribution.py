@@ -43,7 +43,7 @@ class ContributionTests(RBACTestCase):
         self.assertEqual((summary['on_time'], summary['late'], summary['overdue'], summary['review']), (1, 1, 1, 1))
         self.assertEqual(summary['on_time_rate'], 33)
         self.assertEqual(summary['done_hours'], 10.0)
-        self.assertEqual(data['position'], 'Developer')
+        self.assertEqual(data['position'], 'Разработчик')
         # задача плана и задача процесса из базового набора тоже на месте, чужих задач нет
         self.assertIn('Задача emp1', by_name)
         self.assertEqual(by_name['Задача emp1']['source'], 'plan')

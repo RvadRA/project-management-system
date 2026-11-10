@@ -19,7 +19,7 @@ class EmployeeProfile(models.Model):
     skills = models.ManyToManyField(Skill, through='EmployeeSkill', blank=True)
     telegram_chat_id = models.CharField(max_length=100, blank=True, help_text="ID чата в Telegram для уведомлений")
     notify_telegram = models.BooleanField(default=True, verbose_name="Уведомления в Telegram")
-    notify_email = models.BooleanField(default=True, verbose_name="Уведомления по Email")
+    notify_email = models.BooleanField(default=True, verbose_name="Уведомления по электронной почте")
     notify_daily_digest = models.BooleanField(default=True, verbose_name="Ежедневный дайджест")
 
     def __str__(self):
